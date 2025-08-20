@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>IceAgeCam</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { 
+      font-family: 'DejaVu Sans', sans-serif; /* Apply the specified font */
+      margin: 0; 
+      padding: 0; 
+      background: #121212; /* Dark background */
+      color: rgb(255, 119, 56); /* Apply the specified color */
+    }
+    header {
+      background: #1e1e1e; /* Darker header background */
+      color: rgb(255, 119, 56); /* Inherit the specified color */
+      padding: 1.5rem;
+      text-align: left; /* Align header text to the left */
+    }
+    .content {
+      max-width: 800px;
+      margin: auto;
+      padding: 2rem;
+      color: rgb(255, 119, 56); /* Inherit the specified color */
+    }
+    .content p {
+      text-align: justify; /* Justify text */
+      margin-bottom: 1.2rem; /* Add spacing between paragraphs */
+    }
+    .content p strong {
+      font-weight: bold; /* Bold titles */
+    }
+    /* Carousel styles */
+    .carousel {
+      position: relative;
+      max-width: 600px; /* Adjust the width of the carousel */
+      margin: 2rem auto;
+      overflow: hidden;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5); /* Adjusted shadow for dark theme */
+      aspect-ratio: 1870 / 1200; /* Match the aspect ratio of your resized images */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .slides {
+      display: flex;
+      transition: transform 0.5s ease-in-out;
+      width: calc(100% * 4); /* Adjust width based on the number of images */
+    }
+    .slides img {
+      width: 100%; /* Ensure the image spans the full width of the carousel */
+      height: 100%; /* Ensure the image spans the full height of the carousel */
+      object-fit: contain; /* Ensure the entire image is visible without cropping */
+      flex-shrink: 0; /* Prevent images from shrinking */
+      border-radius: 12px;
+    }
+    .buttons {
+      position: absolute;
+      top: 50%;
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      transform: translateY(-50%);
+    }
+    .buttons button {
+      background: rgba(255, 255, 255, 0.2); /* Light button background */
+      border: none;
+      color: rgb(255, 119, 56); /* Apply the specified color */
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      border-radius: 8px;
+    }
+    .references, .credits {
+      margin-top: 2rem;
+      text-align: left;
+      font-size: 0.9rem; /* Slightly smaller font size */
+      line-height: 1.6; /* Improve readability */
+      color: rgb(255, 119, 56); /* Apply the specified color */
+    }
+    .references h3, .credits h3 {
+      font-size: 1.2rem; /* Larger font size for headings */
+      color: rgb(255, 119, 56); /* Apply the specified color */
+      margin-bottom: 0.5rem;
+    }
+    .logo {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 100px; /* Adjust the size of the logo */
+      height: auto; /* Maintain aspect ratio */
+    }
+    .schedule {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 2rem;
+      text-align: left;
+      font-size: 0.9rem;
+      color: rgb(255, 119, 56); /* Apply the specified color */
+    }
+    .schedule th, .schedule td {
+      border: 1px solid rgb(255, 119, 56); /* Border color matches text color */
+      padding: 0.5rem;
+    }
+    .schedule th {
+      background-color: #1e1e1e; /* Darker background for table headers */
+      font-weight: bold;
+    }
+    .schedule tr:nth-child(even) {
+      background-color: #2a2a2a; /* Alternate row background for readability */
+    }
+  </style>
+</head>
+<body>
+  <!-- Add the logo -->
+  <img src="Iceagecam_Logo_2.png" alt="IceAgeCam Logo" class="logo">
+
+  <header>
+    <h1>The Swiss Time Machine</h1>
+    <p> What did Switzerland look like 24,000 years ago? How fast are today’s glaciers disappearing?</p>
+  </header>
+
+  <div class="content">
+    <p>The Swiss Time Machine is a unique augmented reality exhibit designed to answer these questions. This immersive installation brings to life 35,000 years of Swiss glacial history—past, present, and projected future—with stunning realism and scientific depth.</p>
+
+    <div class="carousel">
+      <div class="slides">
+        <img src="fig1_resized.jpg" alt="Picture 1">
+        <img src="figA.jpg" alt="Picture 3">
+        <img src="figB.jpg" alt="Picture 4">
+        <img src="figC.jpg" alt="Picture 5">
+        <img src="figD.jpg" alt="Picture 6">
+        <img src="fig4_resized.png" alt="Picture 7">
+      </div>
+      <div class="buttons">
+        <button id="prev">⟨</button>
+        <button id="next">⟩</button>
+      </div>
+    </div>
+
+    <p><strong>Physical Installation:</strong> At the center of the exhibit is a handcrafted 3D wooden relief of Switzerland’s topography. Over this sculptural canvas, a high-resolution 2-minute and 30-second animation is dynamically projected. The animation displays the evolution of glaciers from the year –35,000 to 2100, illustrating how ice once sculpted—and is now retreating from—the landscape.</p>
+
+    <p><strong>Scientific Background:</strong> The animation is based on state-of-the-art glacier numerical modeling performed by
+        <a href="https://www.nature.com/articles/s41467-025-56168-3" target="_blank"> Leger, Jouvet, and al. (Nature Coms, 2025)</a>
+        to reconstruct paleo glacier evolution with great accuracy, ensuring consistency with field observations, 
+        as well as by <a href="https://doi.org/10.1017/jog.2019.52" target="_blank"> (Jouvet and Huss, JOG, 2019)</a>
+        to project plausible future glacier evolution of Aletsch Glacier.</p>
+
+    <p><strong>AI-based visualization:</strong> A generative AI model transformed the 
+        complex model outputs into hyperrealistic, satellite-style visualizations
+        of the Swiss landscape. This model 
+        -- <a href="https://meetingorganizer.copernicus.org/EGU24/EGU24-11133.html" target="_blank">GlacierGan</a> --
+        was developped by Brandon Finley.
+        </p>
+
+    <p><strong>Contextualization of Global Warming:</strong> By revealing how slow, natural climate processes contrast with the abrupt changes driven by human activity, the exhibit offers a powerful, time-traveling lens through which visitors can better understand how the stunning Swiss landscape was shaped—and become more aware of its vulnerability to climate change in line with project <a href="https://iceagecam.ch" target="_blank">IceAgeCam</a>'s mission,
+    </p>
+
+        
+
+    <div class="timeline" style="text-align: center; margin: 1rem 0;">
+    <img src="timeline.png" alt="Timeline of glacier evolution" style="max-width: 100%; height: auto; border-radius: 8px;">
+    </div>
+
+
+    <p><strong>Exhibition places</strong></p>
+
+    <table class="schedule">
+      <thead>
+        <tr>
+          <th>Event</th>
+          <th>Date</th>
+          <th>Place</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Avant-première</td>
+          <td>June 18 - July 2nd 2025</td>
+          <td>Géopolis, UNIL, CH</td>
+        </tr>
+        <tr>
+          <td>Universal Exhibition, Swiss Pavilion</td>
+          <td>August 14th - October 14th, 2025</td>
+          <td>Osaka, Japan</td>
+        </tr>
+        <tr>
+          <td> <a href="https://digitaldreamsfestival.ch/programme-2025/" target="_blank">Digital Dreams Festival 2025</a> </td>
+          <td>5-7 September, 2025</td>
+          <td>Lausanne, CH</td>
+        </tr>
+        <tr>
+          <td> <a href="https://polar-class.ch/" target="_blank">Swiss Polar Class</a> </td>
+          <td>November 27-28th, 2025</td>
+          <td>Swiss Polar Institute, Sion, CH</td>
+        </tr>
+        <tr>
+          <td> <a href="https://www.aquatis.ch/" target="_blank">Aquatis museum</a> </td>
+          <td>Dec 2025, Jan. & Feb. 2026</td>
+          <td>Lausanne, CH</td>
+        </tr>
+        <tr> 
+          <td> <a href="https://mysteres.ch/2025/" target="_blank">Mystère de l'UNIL</a> </td>
+          <td>28-31 Mai, 2026</td>
+          <td>Lausanne, CH</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p><em>Please contact Guillaume Jouvet at <a href="mailto:guillaume.jouvet@unil.ch">guillaume.jouvet@unil.ch</a> if you are interested in hosting the exhibit for an event or an exhibition.</em></p>
+ 
+    <div class="medias">
+    <h3>Medias</h3>
+    <p>- <a href="https://www.unil.ch/news/fr/1750355326155" target="_blank">Les Alpes comme on ne les a jamais vues</a>, UNIL article.</p>
+    <!-- 
+    <div class="video" style="text-align: center;">
+        <iframe width="400" height="225" src="https://www.youtube.com/embed/m7Cf6MqKOok" 
+                title="IceAgeCam Exhibit Video" frameborder="0" 
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                allowfullscreen></iframe>
+    </div>
+    -->
+    <p>- <a href="https://www.rts.ch/audio-podcast/2025/audio/glaciers-en-3d-histoire-de-la-glaciation-en-suisse-en-une-minute-chrono-28927792.html" target="_blank">Prise de Terre sur le sujet Glaciers en 3D: Histoire de la glaciation en Suisse en une minute chrono</a>, RTS podcast.</p>
+    </div>
+
+
+    <div class="credits">
+      <h3>Credits</h3>
+      <p>Concept: G. Jouvet</p>
+      <p>Glacier simulations: T. Leger & G. Jouvet</p>
+      <p>AI-based landscape texturization & timeline: B. Finley</p>
+      <p>Exhibit construction: R. Widmer (Laporch Sarl)</p>
+      <p>Climate simulations: E. Russo, J. Buzan, C. Raible</p>
+      <p>Funding (visualization): IceAgeCam SNSF project led by A. Linsbauer (UZH), N. Heeb (ZhDK), and G. Jouvet (UNIL)</p>
+      <p>Funding (research): RECONCILE SNSF project led by G. Jouvet (UNIL), A. Vieli (UZH), and S. Nussbaumer (UZH)</p>
+      <p>Funding (exhibit): University of Lausanne (UNIL)</p>
+      <p>Acknowledgements: S. Kamleitner, A. Henz, and the ICE group</p>
+    </div>
+ 
+  </div>
+
+  <script>
+    const slides = document.querySelector('.slides');
+    const images = document.querySelectorAll('.slides img');
+    const totalSlides = images.length;
+    let index = 0;
+
+    function showSlide(i) {
+      index = (i + totalSlides) % totalSlides; // Ensure index wraps around
+      slides.style.transform = `translateX(-${index * 100}%)`;
+    }
+
+    document.getElementById('prev').onclick = () => showSlide(index - 1);
+    document.getElementById('next').onclick = () => showSlide(index + 1);
+
+    // Optional autoplay
+    setInterval(() => showSlide(index + 1), 4000);
+  </script>
+</body>
+</html>
