@@ -110,11 +110,24 @@
     .schedule tr:nth-child(even) {
       background-color: #2a2a2a; /* Alternate row background for readability */
     }
+    /* Link styles for better readability on dark background */
+    a {
+      color: white; /* White color for links */
+      text-decoration: underline; /* Keep underline for link identification */
+    }
+    a:visited {
+      color: #cccccc; /* Light gray for visited links */
+    }
+    a:hover {
+      color: rgb(255, 119, 56); /* Orange color on hover to match theme */
+    }
   </style>
 </head>
 <body>
   <!-- Add the logo -->
-  <img src="Iceagecam_Logo_2.png" alt="IceAgeCam Logo" class="logo">
+  <a href="https://iceagecam.ch" target="_blank">
+    <img src="Iceagecam_Logo_2.png" alt="IceAgeCam Logo" class="logo">
+  </a>
 
   <header>
     <h1>The Swiss Time Machine</h1>
@@ -144,7 +157,7 @@
     <p><strong>Scientific Background:</strong> The animation is based on state-of-the-art glacier numerical modeling performed by
         <a href="https://www.nature.com/articles/s41467-025-56168-3" target="_blank"> Leger, Jouvet, and al. (Nature Coms, 2025)</a>
         to reconstruct paleo glacier evolution with great accuracy, ensuring consistency with field observations, 
-        as well as by <a href="https://doi.org/10.1017/jog.2019.52" target="_blank"> (Jouvet and Huss, JOG, 2019)</a>
+        as well as by <a href="https://doi.org/10.1017/jog.2019.52" target="_blank"> Jouvet and Huss (JOG, 2019)</a>
         to project plausible future glacier evolution of Aletsch Glacier.</p>
 
     <p><strong>AI-based visualization:</strong> A generative AI model transformed the 
@@ -154,17 +167,15 @@
         was developped by Brandon Finley.
         </p>
 
-    <p><strong>Contextualization of Global Warming:</strong> By revealing how slow, natural climate processes contrast with the abrupt changes driven by human activity, the exhibit offers a powerful, time-traveling lens through which visitors can better understand how the stunning Swiss landscape was shaped—and become more aware of its vulnerability to climate change in line with project <a href="https://iceagecam.ch" target="_blank">IceAgeCam</a>'s mission,
+    <p><strong>Contextualization of Global Warming:</strong> By revealing how slow, natural climate processes contrast with the abrupt changes driven by human activity, the exhibit offers a time-traveling lens through which visitors can better understand how the Swiss landscape was shaped—and become more aware of its vulnerability to climate change, which is the core mission of <a href="https://iceagecam.ch" target="_blank">IceAgeCam</a>.
     </p>
-
-        
-
+ 
     <div class="timeline" style="text-align: center; margin: 1rem 0;">
     <img src="timeline.png" alt="Timeline of glacier evolution" style="max-width: 100%; height: auto; border-radius: 8px;">
     </div>
 
 
-    <p><strong>Exhibition places</strong></p>
+    <p><strong>Exhibition places (full exhibit) </strong></p>
 
     <table class="schedule">
       <thead>
@@ -186,11 +197,6 @@
           <td>Osaka, Japan</td>
         </tr>
         <tr>
-          <td> <a href="https://digitaldreamsfestival.ch/programme-2025/" target="_blank">Digital Dreams Festival 2025</a> </td>
-          <td>5-7 September, 2025</td>
-          <td>Lausanne, CH</td>
-        </tr>
-        <tr>
           <td> <a href="https://polar-class.ch/" target="_blank">Swiss Polar Class</a> </td>
           <td>November 27-28th, 2025</td>
           <td>Swiss Polar Institute, Sion, CH</td>
@@ -204,6 +210,30 @@
           <td> <a href="https://mysteres.ch/2025/" target="_blank">Mystère de l'UNIL</a> </td>
           <td>28-31 Mai, 2026</td>
           <td>Lausanne, CH</td>
+        </tr>
+      </tbody>
+    </table>
+ 
+    <p><strong>Exhibition places (film only)</strong></p>
+
+    <table class="schedule">
+      <thead>
+        <tr>
+          <th>Event</th>
+          <th>Date</th>
+          <th>Place</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td> <a href="https://digitaldreamsfestival.ch/programme-2025/" target="_blank">Digital Dreams Festival 2025</a> </td>
+          <td>5-7 September, 2025</td>
+          <td>Lausanne, CH</td>
+        </tr>
+        <tr>
+          <td> <a href="https://seemuseum.ch/Ausstellungen" target="_blank">Eiszeit Ausstellung</a> </td>
+          <td>October 2025 to April 2026</td>
+          <td>Seemuseum, Kreuzlingen, CH</td>
         </tr>
       </tbody>
     </table>
