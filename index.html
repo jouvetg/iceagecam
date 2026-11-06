@@ -84,12 +84,68 @@
       color: rgb(255, 119, 56); /* Apply the specified color */
       margin-bottom: 0.5rem;
     }
-    .logo {
+    /* 3D viewer button (top of the page) */
+    .content p.viewer-cta {
+      text-align: center;
+      margin: 0.5rem 0 2rem;
+    }
+    .viewer-btn {
+      display: inline-block;
+      padding: 0.9rem 1.8rem;
+      font-size: 1.25rem;
+      font-weight: bold;
+      color: #121212;
+      background: rgb(255, 119, 56);
+      border-radius: 10px;
+      text-decoration: none;
+      box-shadow: 0 0 0 0 rgba(255, 119, 56, 0.7);
+      animation: viewer-pulse 1.6s ease-in-out infinite;
+    }
+    .viewer-btn:visited { color: #121212; }
+    .viewer-btn:hover, .viewer-btn:focus-visible { background: white; color: #121212; animation: none; }
+    .viewer-btn:focus-visible { outline: 2px solid white; outline-offset: 3px; }
+    @keyframes viewer-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(255, 119, 56, 0.7); opacity: 1; }
+      50%  { box-shadow: 0 0 0 14px rgba(255, 119, 56, 0); opacity: 0.75; }
+      100% { box-shadow: 0 0 0 0 rgba(255, 119, 56, 0); opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) { .viewer-btn { animation: none; } }
+    .langs {
+      display: inline-flex;
+      margin-top: 0.4rem;
+      border: 1px solid rgb(255, 119, 56);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .langs button {
+      background: transparent;
+      color: rgb(255, 119, 56);
+      border: 0;
+      padding: 0.3rem 0.7rem;
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .langs button + button { border-left: 1px solid rgb(255, 119, 56); }
+    .langs button.on { background: rgb(255, 119, 56); color: #121212; font-weight: bold; }
+    .langs button:focus-visible { outline: 2px solid white; outline-offset: 2px; }
+    .logos {
       position: absolute;
       top: 10px;
       right: 10px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .logo {
+      display: block;
       width: 100px; /* Adjust the size of the logo */
       height: auto; /* Maintain aspect ratio */
+    }
+    .logo-unil {
+      display: block;
+      height: 46px;
+      width: auto;
     }
     .schedule {
       width: 100%;
@@ -124,18 +180,24 @@
   </style>
 </head>
 <body>
-  <!-- Add the logo -->
-  <a href="https://iceagecam.ch" target="_blank">
-    <img src="Iceagecam_Logo_2.png" alt="IceAgeCam Logo" class="logo">
-  </a>
+  <!-- Logos (top right) -->
+  <div class="logos">
+    <a href="https://www.unil.ch" target="_blank"><img src="logo_unil_orange.svg" alt="Université de Lausanne (UNIL)" class="logo-unil"></a>
+    <a href="https://iceagecam.ch" target="_blank"><img src="Iceagecam_Logo_2.png" alt="IceAgeCam Logo" class="logo"></a>
+  </div>
 
   <header>
     <h1>The Swiss Time Machine</h1>
-    <p> What did Switzerland look like 24,000 years ago? How fast are today’s glaciers disappearing?</p>
+    <p data-i18n="subtitle"> What did Switzerland look like 24,000 years ago? How fast are today’s glaciers disappearing?</p>
+    <div class="langs" role="group" aria-label="Language">
+      <button data-lang="en">EN</button><button data-lang="fr">FR</button><button data-lang="de">DE</button>
+    </div>
   </header>
 
   <div class="content">
-    <p>The Swiss Time Machine is a unique augmented reality exhibit designed to answer these questions. This immersive installation brings to life 35,000 years of Swiss glacial history—past, present, and projected future—with stunning realism and scientific depth.</p>
+    <p class="viewer-cta"><a class="viewer-btn" href="viewer/" data-i18n="cta">Explore the online 3D Ice Age viewer</a></p>
+
+    <p data-i18n="intro">The Swiss Time Machine is a unique augmented reality exhibit designed to answer these questions. This immersive installation brings to life 35,000 years of Swiss glacial history—past, present, and projected future—with realism and scientific rigor.</p>
 
     <div class="carousel">
       <div class="slides">
@@ -153,134 +215,118 @@
       </div>
     </div>
 
-    <p><strong>Physical Installation:</strong> At the center of the exhibit is a handcrafted 3D wooden relief of Switzerland’s topography. Over this sculptural canvas, a high-resolution 2-minute and 30-second animation is dynamically projected. The animation displays the evolution of glaciers from the year –35,000 to 2100, illustrating how ice once sculpted—and is now retreating from—the landscape.</p>
+    <p data-i18n="install"><strong>Physical Installation:</strong> At the center of the exhibit is a handcrafted 3D wooden relief of Switzerland’s topography. Over this sculptural canvas, a high-resolution 2-minute and 30-second animation is dynamically projected. The animation displays the evolution of glaciers from the year –35,000 to 2100, illustrating how ice once sculpted—and is now retreating from—the landscape.</p>
 
-    <p><strong>Scientific Background:</strong> The animation is based on state-of-the-art glacier numerical modeling performed by
+    <p data-i18n="science"><strong>Scientific Background:</strong> The animation is based on state-of-the-art glacier numerical modeling performed by
         <a href="https://www.nature.com/articles/s41467-025-56168-3" target="_blank"> Leger, Jouvet, and al. (Nature Coms, 2025)</a>
-        to reconstruct paleo glacier evolution with great accuracy, ensuring consistency with field observations, 
+        to reconstruct paleo glacier evolution with great accuracy, ensuring consistency with field observations,
         as well as by <a href="https://doi.org/10.1017/jog.2019.52" target="_blank"> Jouvet and Huss (JOG, 2019)</a>
         to project plausible future glacier evolution of Aletsch Glacier.</p>
 
-    <p><strong>AI-based visualization:</strong> A generative AI model transformed the 
+    <p data-i18n="ai"><strong>AI-based visualization:</strong> A generative AI model transformed the
         complex model outputs into hyperrealistic, satellite-style visualizations
-        of the Swiss landscape. This model 
+        of the Swiss landscape. This model
         -- <a href="https://meetingorganizer.copernicus.org/EGU24/EGU24-11133.html" target="_blank">GlacierGan</a> --
-        was developped by Brandon Finley.
-        </p>
+        was developped by Brandon Finley.</p>
 
-    <p><strong>Contextualization of Global Warming:</strong> By revealing how slow, natural climate processes contrast with the abrupt changes driven by human activity, the exhibit offers a time-traveling lens through which visitors can better understand how the Swiss landscape was shaped—and become more aware of its vulnerability to climate change, which is the core mission of <a href="https://iceagecam.ch" target="_blank">IceAgeCam</a>.
-    </p>
- 
+    <p data-i18n="context"><strong>Contextualization of Global Warming:</strong> By revealing how slow, natural climate processes contrast with the abrupt changes driven by human activity, the exhibit offers a time-traveling lens through which visitors can better understand how the Swiss landscape was shaped—and become more aware of its vulnerability to climate change, which is the core mission of <a href="https://iceagecam.ch" target="_blank">IceAgeCam</a>.</p>
+
     <div class="timeline" style="text-align: center; margin: 1rem 0;">
-    <img src="timeline.png" alt="Timeline of glacier evolution" style="max-width: 100%; height: auto; border-radius: 8px;">
+    <video src="film_lgm.mp4" poster="film_lgm_poster.jpg" autoplay muted loop playsinline width="1280" height="822"
+           data-i18n-aria="video_aria" aria-label="Animation of the film: Swiss glaciers around the Last Glacial Maximum, 28,000 to 20,000 BCE"
+           style="display: block; margin: 0 auto; width: 100%; max-width: 600px; height: auto; border-radius: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);"></video>
     </div>
 
-
-    <p><strong>Exhibition places (full exhibit) </strong></p>
+    <p><strong data-i18n="places_full">Exhibition places (full exhibit)</strong></p>
 
     <table class="schedule">
       <thead>
-        <tr>
-          <th>Event</th>
-          <th>Date</th>
-          <th>Place</th>
-        </tr>
+        <tr><th data-i18n="th_event">Event</th><th data-i18n="th_date">Date</th><th data-i18n="th_place">Place</th></tr>
       </thead>
       <tbody>
         <tr>
-          <td><a href="https://www.unil.ch/news/fr/1750355326155" target="_blank">Avant-première</a></td>
-          <td>June 18 - July 2nd 2025</td>
+          <td><a href="https://www.unil.ch/news/fr/1750355326155" target="_blank" data-i18n="e_preview">Avant-première</a></td>
+          <td data-i18n="d_preview">June 18 – July 2, 2025</td>
           <td>Géopolis, UNIL, CH</td>
         </tr>
         <tr>
-          <td><a href="https://houseofswitzerland.org/events/swiss-pavilion-expo-osaka" target="_blank">Universal Exhibition, Swiss Pavilion</a></td>
-          <td>August 14th - October 14th, 2025</td>
-          <td>Osaka, Japan</td>
+          <td><a href="https://houseofswitzerland.org/events/swiss-pavilion-expo-osaka" target="_blank" data-i18n="e_osaka">Universal Exhibition, Swiss Pavilion</a></td>
+          <td data-i18n="d_osaka">August 14 – October 14, 2025</td>
+          <td data-i18n="p_osaka">Osaka, Japan</td>
         </tr>
-          <td> <a href="https://www.aquatis.ch/" target="_blank">Aquatis museum</a> </td>
-          <td>Dec 2025 -- Dec 2026</td>
+        <tr>
+          <td><a href="https://www.aquatis.ch/" target="_blank" data-i18n="e_aquatis">Aquatis museum</a></td>
+          <td data-i18n="d_aquatis">Dec 2025 – Dec 2026</td>
           <td>Lausanne, CH</td>
         </tr>
-        <tr> 
-          <td> <a href="https://mysteres.ch/2025/" target="_blank">Mystère de l'UNIL</a> </td>
-          <td>28-31 Mai, 2026</td>
+        <tr>
+          <td><a href="https://mysteres.ch/2025/" target="_blank">Mystères de l'UNIL</a></td>
+          <td data-i18n="d_mysteres">May 28–31, 2026</td>
           <td>Lausanne, CH</td>
         </tr>
-         <tr>
-          <td> <a href="https://polar-class.ch/" target="_blank">Swiss Polar Class</a> </td>
-          <td>November, 2026</td>
+        <tr>
+          <td><a href="https://polar-class.ch/" target="_blank">Swiss Polar Class</a></td>
+          <td data-i18n="d_polar">November 2026</td>
           <td>Swiss Polar Institute, Sion, CH</td>
         </tr>
-        </tr>
-          <td> <a href="https://natureum.ch" target="_blank">Naturéum, Exposition "Un monde sans glace"</a> </td>
-          <td>Feb 2027 -- Dec 2027</td>
+        <tr>
+          <td><a href="https://natureum.ch" target="_blank" data-i18n="e_natureum">Naturéum, exhibition "Un monde sans glace"</a></td>
+          <td data-i18n="d_natureum">Feb 2027 – Dec 2027</td>
           <td>Palais de Rumine, Lausanne, CH</td>
         </tr>
-        <tr> 
       </tbody>
     </table>
- 
-    <p><strong>Exhibition places (film only)</strong></p>
+
+    <p><strong data-i18n="places_film">Exhibition places (film only)</strong></p>
 
     <table class="schedule">
       <thead>
-        <tr>
-          <th>Event</th>
-          <th>Date</th>
-          <th>Place</th>
-        </tr>
+        <tr><th data-i18n="th_event">Event</th><th data-i18n="th_date">Date</th><th data-i18n="th_place">Place</th></tr>
       </thead>
       <tbody>
         <tr>
-          <td> <a href="https://www.geneve.ch/museum-histoire-naturelle" target="_blank">Université de Genève</a> </td>
-          <td>Septembre 2026 -- Decembre 2026 </td>
+          <td><a href="https://www.unige.ch/cite/evenements/exposition/sable" target="_blank" data-i18n="e_unige">University of Geneva</a></td>
+          <td data-i18n="d_unige">September – December 2026</td>
           <td>Salle d’Exposition de l’Université de Genève, CH</td>
         </tr>
         <tr>
-          <td> <a href="https://digitaldreamsfestival.ch/programme-2025/" target="_blank">Digital Dreams Festival 2025</a> </td>
-          <td>5-7 September, 2025</td>
+          <td><a href="https://digitaldreamsfestival.ch/programme-2025/" target="_blank">Digital Dreams Festival 2025</a></td>
+          <td data-i18n="d_dreams">September 5–7, 2025</td>
           <td>Lausanne, CH</td>
         </tr>
         <tr>
-          <td> <a href="https://seemuseum.ch/Ausstellungen" target="_blank">Eiszeit Ausstellung</a> </td>
-          <td>October 2025 to April 2026</td>
+          <td><a href="https://seemuseum.ch/Ausstellungen" target="_blank" data-i18n="e_eiszeit">Eiszeit exhibition</a></td>
+          <td data-i18n="d_eiszeit">October 2025 – April 2026</td>
           <td>Seemuseum, Kreuzlingen, CH</td>
         </tr>
       </tbody>
     </table>
 
-    <p><em>Please contact Guillaume Jouvet at <a href="mailto:guillaume.jouvet@unil.ch">guillaume.jouvet@unil.ch</a> if you are interested in hosting the exhibit for an event or an exhibition.</em></p>
- 
-    <div class="medias">
-    <h3>Medias</h3>
-    <p>- <a href="https://www.unil.ch/news/fr/1750355326155" target="_blank">Les Alpes comme on ne les a jamais vues</a>, UNIL article.</p>
-    <!-- 
-    <div class="video" style="text-align: center;">
-        <iframe width="400" height="225" src="https://www.youtube.com/embed/m7Cf6MqKOok" 
-                title="IceAgeCam Exhibit Video" frameborder="0" 
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-                allowfullscreen></iframe>
-    </div>
-    -->
-    <p>- <a href="https://www.rts.ch/audio-podcast/2025/audio/glaciers-en-3d-histoire-de-la-glaciation-en-suisse-en-une-minute-chrono-28927792.html" target="_blank">Prise de Terre sur le sujet Glaciers en 3D: Histoire de la glaciation en Suisse en une minute chrono</a>, RTS podcast.</p>
-    </div>
+    <p><em data-i18n="contact">Please contact Guillaume Jouvet at <a href="mailto:guillaume.jouvet@unil.ch">guillaume.jouvet@unil.ch</a> if you are interested in hosting the exhibit for an event or an exhibition.</em></p>
 
+    <div class="medias">
+    <h3 data-i18n="medias">Medias</h3>
+    <p>- <a href="https://www.unil.ch/news/fr/1750355326155" target="_blank">Les Alpes comme on ne les a jamais vues</a>, <span data-i18n="m_unil">UNIL article.</span></p>
+    <p>- <a href="https://www.rts.ch/audio-podcast/2025/audio/glaciers-en-3d-histoire-de-la-glaciation-en-suisse-en-une-minute-chrono-28927792.html" target="_blank">Prise de Terre sur le sujet Glaciers en 3D: Histoire de la glaciation en Suisse en une minute chrono</a>, <span data-i18n="m_rts">RTS podcast.</span></p>
+    </div>
 
     <div class="credits">
-      <h3>Credits</h3>
-      <p>Concept: G. Jouvet</p>
-      <p>Glacier simulations: T. Leger & G. Jouvet</p>
-      <p>AI-based landscape texturization & timeline: B. Finley</p>
-      <p>Exhibit construction: R. Widmer (Laporch Sarl)</p>
-      <p>Climate simulations: E. Russo, J. Buzan, C. Raible</p>
-      <p>Funding (visualization): IceAgeCam SNSF project led by A. Linsbauer (UZH), N. Heeb (ZhDK), and G. Jouvet (UNIL)</p>
-      <p>Funding (research): RECONCILE SNSF project led by G. Jouvet (UNIL), A. Vieli (UZH), and S. Nussbaumer (UZH)</p>
-      <p>Funding (exhibit): University of Lausanne (UNIL)</p>
-      <p>Acknowledgements: S. Kamleitner, A. Henz, and the ICE group</p>
+      <h3 data-i18n="credits">Credits</h3>
+      <p><span data-i18n="c_concept">Concept</span>: G. Jouvet</p>
+      <p><span data-i18n="c_sim">Glacier simulations</span>: T. Leger &amp; G. Jouvet</p>
+      <p><span data-i18n="c_ai">AI-based landscape texturization &amp; timeline</span>: B. Finley</p>
+      <p><span data-i18n="c_build">Exhibit construction</span>: R. Widmer (Laporch Sarl)</p>
+      <p><span data-i18n="c_sound">Sound design</span>: L. Solari</p>
+      <p><span data-i18n="c_climate">Climate simulations</span>: E. Russo, J. Buzan, C. Raible</p>
+      <p data-i18n="c_fund_vis">Funding (visualization): IceAgeCam SNSF project led by A. Linsbauer (UZH), N. Heeb (ZhDK), and G. Jouvet (UNIL)</p>
+      <p data-i18n="c_fund_res">Funding (research): RECONCILE SNSF project led by G. Jouvet (UNIL), A. Vieli (UZH), and S. Nussbaumer (UZH)</p>
+      <p data-i18n="c_fund_exh">Funding (exhibit): University of Lausanne (UNIL)</p>
+      <p data-i18n="c_thanks">Acknowledgements: S. Kamleitner, A. Henz, and the ICE group</p>
     </div>
  
   </div>
 
+  <script src="i18n.js"></script>
   <script>
     const slides = document.querySelector('.slides');
     const images = document.querySelectorAll('.slides img');
