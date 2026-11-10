@@ -820,23 +820,31 @@ function showHelp() {                                      // controls card in f
   XR.helpAt = performance.now();
 }
 
-function makeCityLabels() {                               // 3D city names (the HTML labels are not shown in XR)
+function makeCityLabels() {                               // 3D place names (the HTML labels are not shown in XR)
   XR.labels.clear();
-  for (const c of meta.cities) {
-    const name = tr("cityNames")[c.name] ?? c.name;
-    const cv = document.createElement("canvas"), g = cv.getContext("2d");
-    g.font = "bold 44px sans-serif";
-    cv.width = Math.ceil(g.measureText(name).width) + 24; cv.height = 64;
-    g.font = "bold 44px sans-serif"; g.textAlign = "center";
-    g.lineWidth = 8; g.strokeStyle = "rgba(0,0,0,0.85)"; g.strokeText(name, cv.width / 2, 46);
-    g.fillStyle = "#fff"; g.fillText(name, cv.width / 2, 46);
+  const cfg = window.ALPS3D_CONFIG || {};
+  const places = [
+    ...meta.cities.map((c) => ({ name: tr("cityNames")[c.name] ?? c.name, u: c.u, v: c.v, size: 0.04, kind: "city" })),
+    ...(cfg.towns || []).map(([name, u, v]) => ({ name, u, v, size: 0.028, kind: "town" })),
+    ...(cfg.peaks || []).map(([name, u, v]) => ({ name: "▲ " + name, u, v, size: 0.026, kind: "peak" })),
+  ];
+  for (const c of places) {
+    const cv = document.createElement("canvas"), g = cv.getContext("2d"), font = `${c.kind === "city" ? "bold " : ""}44px sans-serif`;
+    g.font = font;
+    cv.width = Math.ceil(g.measureText(c.name).width) + 24; cv.height = 84;
+    g.font = font; g.textAlign = "center";
+    g.lineWidth = 8; g.strokeStyle = "rgba(0,0,0,0.85)"; g.strokeText(c.name, cv.width / 2, 46);
+    g.fillStyle = c.kind === "peak" ? "#cfe6ff" : "#fff"; g.fillText(c.name, cv.width / 2, 46);
+    if (c.kind !== "peak") {                               // dot marking the place, at the bottom of the label
+      g.beginPath(); g.arc(cv.width / 2, 72, 9, 0, 2 * Math.PI);
+      g.fillStyle = "#ff7738"; g.fill(); g.lineWidth = 3; g.strokeStyle = "#000"; g.stroke();
+    }
     const tex = new THREE.CanvasTexture(cv);
     tex.colorSpace = THREE.SRGBColorSpace;
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false, fog: false }));
-    sp.center.set(0.5, 0);
-    sp.userData.w = 0.035 * cv.width / cv.height;
-    sp.renderOrder = 10;
-    sp.userData.c = c;
+    sp.center.set(0.5, c.kind === "peak" ? 0.3 : 12 / 84);
+    sp.userData = { c, w: c.size * cv.width / cv.height * 84 / 64, h: c.size * 84 / 64 };
+    sp.renderOrder = c.kind === "city" ? 12 : 10;
     XR.labels.add(sp);
   }
 }
@@ -844,8 +852,8 @@ function makeCityLabels() {                               // 3D city names (the 
 function placeCityLabels() {
   for (const sp of XR.labels.children) {
     const c = sp.userData.c;
-    sp.position.set((c.u - 0.5) * W, heightAt(c.u, c.v) * s() + 0.06 * state.exag, (c.v - 0.5) * D);
-    sp.scale.set(sp.userData.w / world.scale.x, 0.035 / world.scale.x, 1);   // constant on-screen size
+    sp.position.set((c.u - 0.5) * W, heightAt(c.u, c.v) * s() + 0.02 * state.exag, (c.v - 0.5) * D);
+    sp.scale.set(sp.userData.w / world.scale.x, sp.userData.h / world.scale.x, 1);   // constant on-screen size
   }
 }
 
