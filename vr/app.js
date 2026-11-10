@@ -250,7 +250,7 @@ const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
   uH: { value: null }, uIce: { value: null }, uTex: { value: null }, uLut: { value: lut },
   uH2: { value: null }, uIce2: { value: null }, uTex2: { value: null }, uMix: { value: 0 },
   uHSize: { value: new THREE.Vector2(1, 1) }, uMap: { value: new THREE.Vector4(1, 1, 0, 0) }, uSize: { value: new THREE.Vector2(W, D) },
-  uExag: { value: 2.5 }, uBottom: { value: -6 }, uMode: { value: 0 }, uOpacity: { value: 0.75 },
+  uExag: { value: 2 }, uBottom: { value: -6 }, uMode: { value: 0 }, uOpacity: { value: 0.75 },
   uShade: { value: 0 }, uSun: { value: new THREE.Vector3() },
 }]);
 
@@ -368,7 +368,7 @@ border.frustumCulled = false;
 world.add(border);
 
 // state
-const state = { k: 0, level: 1, playing: false, mode: 0, exag: 2.5, fps: 10 };
+const state = { k: 0, level: 1, playing: false, mode: 0, exag: 2, fps: 10 };
 let shown = null;           // frame data currently on the GPU
 let shownNext = null;       // next frame, blended in during playback (uMix)
 let cur = null;             // {L, H, thk, vel} for picking (CPU copy of what is shown)
@@ -720,9 +720,10 @@ setLang(lang);
 
 // VR / mixed reality (Meta Quest; enabled by config.js: vr: true)
 // "table": the Alps as a ~1.4 m model in the room (passthrough); "fly": landscape scale, flying with the sticks.
-// Right controller: trigger play/pause, A/B one step, stick fly (fly) or rotate/zoom (table), grip faster.
-// Left controller: trigger layer, X mesh, Y reset view, stick left/right time, up/down altitude or model height.
-const XR = { rig: new THREE.Group(), mode: null, saved: null, prev: {}, scrub: 0, snap: true, meshes: [1, 0, 2], mi: 0 };
+// Kept simple: 250 m mesh, border and cities always on.
+// Left stick: move (fly: forward/back where you look, turn; table: rotate/zoom). Right stick left/right: time.
+// Right trigger: play/pause. A or X: next layer. B or Y: reset the view. Grip: move faster.
+const XR = { rig: new THREE.Group(), mode: null, saved: null, prev: {}, scrub: 0, snap: true, labels: new THREE.Group(), helpAt: 0 };
 scene.add(XR.rig);
 XR.rig.add(camera);
 if (window.ALPS3D_CONFIG?.vr) setupXR();
@@ -739,7 +740,8 @@ function setupXR() {
   Promise.all([check("immersive-ar"), check("immersive-vr")]).then(([ar, vr]) => {
     box.querySelector('[data-m="table"]').disabled = !(ar || vr);
     box.querySelector('[data-m="fly"]').disabled = !vr;
-    if (ar || vr) $("xrInfo").textContent = "Choose a mode. Controllers: see the panel on your left wrist.";
+    if (ar || vr) $("xrInfo").innerHTML = "Left stick: move · Right stick ←→: time · Right trigger: play/pause<br>"
+      + "A or X: layer (texture, ice thickness, speed) · B or Y: reset view · Grip: faster";
   });
   box.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) startXR(b.dataset.m); });
 
@@ -759,6 +761,92 @@ function setupXR() {
   XR.panel.position.set(0, 0.07, -0.06);
   XR.panel.rotation.x = -0.9;
   $("timeline").addEventListener("load", drawPanel);
+  XR.labels.visible = false;
+  world.add(XR.labels);
+  const hc = document.createElement("canvas");
+  hc.width = 1400; hc.height = 900;
+  XR.hctx = hc.getContext("2d");
+  XR.htex = new THREE.CanvasTexture(hc);
+  XR.htex.colorSpace = THREE.SRGBColorSpace;
+  XR.help = new THREE.Mesh(new THREE.PlaneGeometry(0.98, 0.63), new THREE.MeshBasicMaterial({ map: XR.htex, transparent: true, depthTest: false }));
+  XR.help.renderOrder = 20;
+  XR.help.visible = false;
+  XR.rig.add(XR.help);
+}
+
+const HELP = {
+  en: ["Controls", "Move in space", "Move in time", "Change the map",
+    { fly: "Left stick: push forward to fly where you look, left / right to turn", table: "Left stick: left / right to rotate, up / down to zoom" },
+    "Right stick left / right: backward / forward in time", "Right trigger: play / pause",
+    "A or X: satellite view → ice thickness → ice speed", "B or Y: reset the view and show this help · Grip: faster",
+    "Press any button to start"],
+  fr: ["Commandes", "Se déplacer dans l’espace", "Se déplacer dans le temps", "Changer de carte",
+    { fly: "Stick gauche : pousser en avant pour voler où vous regardez, gauche / droite pour tourner", table: "Stick gauche : gauche / droite pour tourner, haut / bas pour zoomer" },
+    "Stick droit gauche / droite : reculer / avancer dans le temps", "Gâchette droite : lecture / pause",
+    "A ou X : vue satellite → épaisseur de glace → vitesse de la glace", "B ou Y : réinitialiser la vue et revoir cette aide · Grip : plus vite",
+    "Appuyez sur un bouton pour commencer"],
+  de: ["Bedienung", "Im Raum bewegen", "In der Zeit bewegen", "Karte wechseln",
+    { fly: "Linker Stick: nach vorne drücken, um in Blickrichtung zu fliegen, links / rechts zum Drehen", table: "Linker Stick: links / rechts drehen, oben / unten zoomen" },
+    "Rechter Stick links / rechts: zurück / vorwärts in der Zeit", "Rechter Trigger: Wiedergabe / Pause",
+    "A oder X: Satellitenbild → Eisdicke → Eisgeschwindigkeit", "B oder Y: Ansicht zurücksetzen und diese Hilfe zeigen · Grip: schneller",
+    "Beliebige Taste drücken, um zu starten"],
+};
+
+function showHelp() {                                      // controls card in front of the viewer
+  const t = HELP[document.documentElement.lang] || HELP.en, g = XR.hctx;
+  g.clearRect(0, 0, 1400, 900);
+  g.fillStyle = "rgba(10,14,20,0.9)"; g.beginPath(); g.roundRect(0, 0, 1400, 900, 40); g.fill();
+  g.fillStyle = "#ff7738"; g.font = "bold 72px sans-serif"; g.fillText(t[0], 60, 110);
+  const rows = [[t[1], [t[4][XR.mode]]], [t[2], [t[5], t[6]]], [t[3], [t[7]]]];
+  let y = 210;
+  rows.forEach(([h, lines], i) => {
+    g.fillStyle = "#ff7738"; g.font = "bold 50px sans-serif"; g.fillText(`${i + 1}. ${h}`, 60, y); y += 66;
+    g.fillStyle = "#fff"; g.font = "40px sans-serif";
+    for (const l of lines) { g.fillText(l, 100, y, 1260); y += 56; }
+    y += 30;
+  });
+  g.fillStyle = "#9fb0c2"; g.font = "36px sans-serif"; g.fillText(t[8], 60, y, 1280);
+  g.fillStyle = "#fff"; g.font = "bold 44px sans-serif"; g.textAlign = "center"; g.fillText(t[9], 700, 860); g.textAlign = "left";
+  XR.htex.needsUpdate = true;
+  const head = new THREE.Vector3(), dir = new THREE.Vector3();
+  camera.getWorldPosition(head); camera.getWorldDirection(dir);
+  XR.rig.worldToLocal(head);
+  dir.y = 0; dir.normalize();
+  const yaw = Math.atan2(dir.x, dir.z) - XR.rig.rotation.y;
+  if (!head.y) head.y = 1.6;                               // no pose yet
+  XR.help.position.set(head.x + Math.sin(yaw) * 1.1, head.y - 0.1, head.z + Math.cos(yaw) * 1.1);
+  XR.help.rotation.set(0, yaw + Math.PI, 0);
+  XR.help.visible = true;
+  XR.helpAt = performance.now();
+}
+
+function makeCityLabels() {                               // 3D city names (the HTML labels are not shown in XR)
+  XR.labels.clear();
+  for (const c of meta.cities) {
+    const name = tr("cityNames")[c.name] ?? c.name;
+    const cv = document.createElement("canvas"), g = cv.getContext("2d");
+    g.font = "bold 44px sans-serif";
+    cv.width = Math.ceil(g.measureText(name).width) + 24; cv.height = 64;
+    g.font = "bold 44px sans-serif"; g.textAlign = "center";
+    g.lineWidth = 8; g.strokeStyle = "rgba(0,0,0,0.85)"; g.strokeText(name, cv.width / 2, 46);
+    g.fillStyle = "#fff"; g.fillText(name, cv.width / 2, 46);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false, fog: false }));
+    sp.center.set(0.5, 0);
+    sp.userData.w = 0.035 * cv.width / cv.height;
+    sp.renderOrder = 10;
+    sp.userData.c = c;
+    XR.labels.add(sp);
+  }
+}
+
+function placeCityLabels() {
+  for (const sp of XR.labels.children) {
+    const c = sp.userData.c;
+    sp.position.set((c.u - 0.5) * W, heightAt(c.u, c.v) * s() + 0.06 * state.exag, (c.v - 0.5) * D);
+    sp.scale.set(sp.userData.w / world.scale.x, 0.035 / world.scale.x, 1);   // constant on-screen size
+  }
 }
 
 function drawPanel() {
@@ -767,19 +855,19 @@ function drawPanel() {
   g.fillStyle = "rgba(0,0,0,0.85)"; g.fillRect(0, 0, 1024, 400);
   if (img.complete && img.naturalWidth) g.drawImage(img, 0, 0, 1024, 273);
   const t = times[state.k], layer = [tr("texture"), tr("thickness"), tr("speed")][state.mode];
-  const mesh = { 0: "250 m", 1: "500 m", 2: "125 m" }[state.mesh];
   g.fillStyle = "#ff7738"; g.font = "bold 40px sans-serif";
-  g.fillText(`${t < 0 ? "−" : ""}${fmt(Math.abs(t))}   ${state.playing ? "▶" : "❚❚"}   ${layer}   ${mesh}`, 20, 325);
+  g.fillText(`${t < 0 ? "−" : ""}${fmt(Math.abs(t))}   ${state.playing ? "▶" : "❚❚"}   ${layer}`, 20, 325);
   g.fillStyle = "#9fb0c2"; g.font = "26px sans-serif";
-  g.fillText("R: trigger play · A/B step · stick move · grip fast", 20, 362);
-  g.fillText("L: trigger layer · X mesh · Y reset · stick ↔ time, ↕ height", 20, 393);
+  g.fillText("Left stick: move · Right stick ↔: time · Right trigger: play", 20, 362);
+  g.fillText("A / X: layer · B / Y: reset view · Grip: faster", 20, 393);
   XR.tex.needsUpdate = true;
 }
 
 async function startXR(mode) {
   const type = mode === "table" && await navigator.xr.isSessionSupported("immersive-ar") ? "immersive-ar" : "immersive-vr";
   const session = await navigator.xr.requestSession(type, { optionalFeatures: ["local-floor", "bounded-floor"] });
-  XR.saved = { exag: state.exag, mesh: state.mesh, cam: camera.position.clone(), near: camera.near, far: camera.far };
+  XR.saved = { exag: state.exag, mesh: state.mesh, cam: camera.position.clone(), near: camera.near, far: camera.far,
+    border: border.visible };
   XR.mode = mode;
   state.xr = true;
   controls.enabled = false;
@@ -788,10 +876,14 @@ async function startXR(mode) {
   session.addEventListener("end", endXR);
   await renderer.xr.setSession(session);
   renderer.xr.setFoveation?.(1);
-  setXRMesh(1);
+  setXRMesh(0);
+  border.visible = true;
+  makeCityLabels();
+  XR.labels.visible = true;
   resetXRView();
   show(state.k);
   drawPanel();
+  XR.helpPending = true;
 }
 
 function setExag(v) {
@@ -811,19 +903,19 @@ function resetXRView() {
   world.rotation.set(0, 0, 0);
   XR.rig.rotation.set(0, 0, 0);
   if (XR.mode === "table") {
-    setExag(4);
+    setExag(2);
     world.scale.setScalar(1.4 / W);                       // 392 km -> 1.4 m
     world.position.set(0, 0.85, -0.9);
     XR.rig.position.set(0, 0, 0);
     camera.near = 0.02; camera.far = 50;
     scene.fog.near = 1e8; scene.fog.far = 1e9;
   } else {
-    setExag(1.5);
+    setExag(2);
     world.scale.setScalar(1000);                          // 1 km -> 1000 m: landscape scale
     world.position.set(0, 0, 0);
     const u = 0.21, v = 0.66;                             // south of Lausanne, looking north over the lake
     XR.rig.position.set((u - 0.5) * W * 1000, heightAt(u, v) * state.exag + 2500, (v - 0.5 + 0.08) * D * 1000);
-    camera.near = 2; camera.far = 700000;
+    camera.near = 0.2; camera.far = 700000;               // near enough for the wrist panel and the help card
     scene.fog.near = 80000; scene.fog.far = 450000;
   }
 }
@@ -837,6 +929,9 @@ function endXR() {
   camera.updateProjectionMatrix();
   setExag(XR.saved.exag);
   setXRMesh(XR.saved.mesh);
+  border.visible = XR.saved.border;
+  XR.labels.visible = false;
+  XR.help.visible = false;
   controls.enabled = true;
   document.body.classList.remove("noui");
   show(state.k);
@@ -856,59 +951,61 @@ function xrUpdate(now, xrFrame) {
   const dt = XR.last ? Math.min((now - XR.last) / 1000, 0.1) : 0;
   XR.last = now;
   let redraw = false;
+  if (XR.helpPending && xrFrame.getViewerPose(renderer.xr.getReferenceSpace())) { XR.helpPending = false; showHelp(); }
+  if (XR.help.visible) {                                   // the card stays until a button or stick is used
+    let any = false;
+    for (const src of xrFrame.session.inputSources) {
+      const gp = src.gamepad;
+      if (!gp) continue;
+      gp.buttons.forEach((b, i) => { if (b.pressed && !XR.prev[src.handedness + i]) any = true; XR.prev[src.handedness + i] = b.pressed; });
+      if (gp.axes.some((a) => Math.abs(a) > 0.5)) any = true;
+    }
+    if (any && now - XR.helpAt > 800) XR.help.visible = false;
+    return;
+  }
   for (const src of xrFrame.session.inputSources) {
     const gp = src.gamepad, hand = src.handedness;
     if (!gp) continue;
     const [x, y] = gp.axes.length >= 4 ? [gp.axes[2], gp.axes[3]] : [gp.axes[0] || 0, gp.axes[1] || 0];
     const sx = Math.abs(x) > 0.15 ? x : 0, sy = Math.abs(y) > 0.15 ? y : 0;
+    const boost = gp.buttons[1]?.pressed ? 5 : 1;
+    if (pressed(hand, gp, 4)) { state.mode = uniforms.uMode.value = (state.mode + 1) % 3; redraw = true; }
+    if (pressed(hand, gp, 5)) { resetXRView(); showHelp(); }
     if (hand === "right") {
       if (pressed(hand, gp, 0)) { setPlaying(!state.playing); redraw = true; }
-      if (pressed(hand, gp, 4)) { setPlaying(false); show(state.k + 1); redraw = true; }
-      if (pressed(hand, gp, 5)) { setPlaying(false); show(state.k - 1); redraw = true; }
-      const boost = gp.buttons[1]?.pressed ? 5 : 1;
-      if (XR.mode === "fly") {
-        const alt = Math.max(XR.rig.position.y - groundAt(XR.rig.position.x, XR.rig.position.z), 50);
-        const speed = Math.min(Math.max(alt * 0.6, 150), 8000) * boost;
-        if (sy) {
-          const dir = new THREE.Vector3();
-          camera.getWorldDirection(dir);
-          XR.rig.position.addScaledVector(dir, -sy * speed * dt);
-        }
-        if (Math.abs(x) > 0.7 && XR.snap) {                 // snap turn around the head
-          const head = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
-          XR.rig.rotation.y -= Math.sign(x) * Math.PI / 6;
-          XR.rig.updateMatrixWorld(true);
-          const head2 = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
-          XR.rig.position.sub(head2.sub(head));
-          XR.snap = false;
-        }
-        if (Math.abs(x) < 0.3) XR.snap = true;
-      } else {
-        world.rotation.y += sx * dt * 1.2;
-        const sc = Math.min(Math.max(world.scale.x * (1 - sy * dt * boost), 0.2 / W), 30 / W);
-        world.scale.setScalar(sc);
-      }
-    } else {
-      if (pressed(hand, gp, 0)) { state.mode = uniforms.uMode.value = (state.mode + 1) % 3; redraw = true; }
-      if (pressed(hand, gp, 4)) { XR.mi = (XR.mi + 1) % XR.meshes.length; if (!LEVELS[XR.meshes[XR.mi]]) XR.mi = 0; setXRMesh(XR.meshes[XR.mi]); }
-      if (pressed(hand, gp, 5)) resetXRView();
       if (sx) {                                            // scrub time: up to ~12 frames per second
         if (state.playing) setPlaying(false);
-        XR.scrub += sx * dt * 12;
+        XR.scrub += sx * dt * 12 * (boost > 1 ? 3 : 1);
         if (Math.abs(XR.scrub) >= 1) { const n = Math.trunc(XR.scrub); XR.scrub -= n; show(state.k + n, { hq: true }); redraw = true; }
       }
+    } else if (XR.mode === "fly") {
+      const alt = Math.max(XR.rig.position.y - groundAt(XR.rig.position.x, XR.rig.position.z), 50);
+      const speed = Math.min(Math.max(alt * 0.6, 150), 8000) * boost;
       if (sy) {
-        if (XR.mode === "fly") {
-          const alt = Math.max(XR.rig.position.y - groundAt(XR.rig.position.x, XR.rig.position.z), 50);
-          XR.rig.position.y -= sy * Math.min(Math.max(alt * 0.6, 150), 8000) * dt;
-        } else world.position.y = Math.min(Math.max(world.position.y - sy * dt * 0.4, 0.2), 1.8);
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        XR.rig.position.addScaledVector(dir, -sy * speed * dt);
       }
+      if (Math.abs(x) > 0.7 && XR.snap) {                 // snap turn around the head
+        const head = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+        XR.rig.rotation.y -= Math.sign(x) * Math.PI / 6;
+        XR.rig.updateMatrixWorld(true);
+        const head2 = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+        XR.rig.position.sub(head2.sub(head));
+        XR.snap = false;
+      }
+      if (Math.abs(x) < 0.3) XR.snap = true;
+    } else {
+      world.rotation.y += sx * dt * 1.2;
+      const sc = Math.min(Math.max(world.scale.x * (1 - sy * dt * boost), 0.2 / W), 30 / W);
+      world.scale.setScalar(sc);
     }
   }
   if (XR.mode === "fly") {                                 // keep above the ground
     const floor = groundAt(XR.rig.position.x, XR.rig.position.z) + 30;
     if (XR.rig.position.y < floor) XR.rig.position.y = floor;
   }
+  placeCityLabels();
   if (redraw || (state.playing && state.k !== XR.lastK)) { XR.lastK = state.k; drawPanel(); }
 }
 
@@ -919,7 +1016,7 @@ let k0 = stats ? stats.reduce((b, st, i) => (st.vol > stats[b].vol ? i : b), 0) 
 if (qs.has("t")) k0 = nearestK(+qs.get("t"));
 state.k = want = k0;
 {
-  const m = { "125": 2, "250": 0, "500": 1 }[qs.get("mesh")] ?? (savedMesh !== null ? +savedMesh : state.mesh);
+  const m = window.ALPS3D_CONFIG?.vr ? 0 : { "125": 2, "250": 0, "500": 1 }[qs.get("mesh")] ?? (savedMesh !== null ? +savedMesh : state.mesh);
   state.mesh = LEVELS[m] ? m : 0;
   if (state.mesh !== 0) { terrain.geometry.dispose(); terrain.geometry = buildGeometry(LEVELS[state.mesh]); }
   $("meshRes").querySelectorAll("button").forEach((x) => x.classList.toggle("on", +x.dataset.v === state.mesh));

@@ -30,10 +30,10 @@
       </div>
       <label class="row" id="opacityRow" hidden><span data-i18n="opacity"></span> <input id="opacity" type="range" min="0" max="1" step="0.05" value="0.75"></label>
     </section>
-    <section>
+    <section hidden>
       <h3 data-i18n="terrain"></h3>
-      <label class="row"><span data-i18n="exag"></span> <output id="exagOut">2.5×</output>
-        <input id="exag" type="range" min="1" max="6" step="0.1" value="2.5"></label>
+      <label class="row"><span data-i18n="exag"></span> <output id="exagOut">2.0×</output>
+        <input id="exag" type="range" min="1" max="6" step="0.1" value="2"></label>
       <label class="row"><span data-i18n="shade"></span> <input id="shade" autocomplete="off" type="range" min="0" max="1" step="0.05" value="0"></label>
       <label class="row"><span data-i18n="sun"></span> <input id="sunaz" type="range" min="0" max="360" step="5" value="315"></label>
       <div class="row"><span data-i18n="mesh"></span>
@@ -45,16 +45,16 @@
       </div>
       <label class="check"><input id="hq" type="checkbox" checked> <span data-i18n="hq"></span></label>
     </section>
-    <section>
+    <section hidden>
       <h3 data-i18n="overlays"></h3>
       <label class="check"><input id="showBorder" type="checkbox" checked> <span data-i18n="border"></span></label>
       <label class="check"><input id="showCities" type="checkbox" checked> <span data-i18n="cities"></span></label>
     </section>
-    <section>
+    <section hidden>
       <h3 data-i18n="flyto"></h3>
       <div class="views" id="views"></div>
     </section>
-    <section class="help" data-i18n-html="help"></section>
+    <section class="help" data-i18n-html="help" hidden></section>
   </div>
 </aside>
 
