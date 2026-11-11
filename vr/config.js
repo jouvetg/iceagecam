@@ -15,6 +15,7 @@ window.ALPS3D_CONFIG = {
   home: "../",
   logos: [
     { src: "../logo_unil_orange.svg", href: "https://www.unil.ch", alt: "Université de Lausanne" },
+    { src: "../logo_uzh_orange.svg", href: "https://www.uzh.ch", alt: "Universität Zürich" },
     { src: "../Iceagecam_Logo_2.png", href: "https://iceagecam.ch", alt: "IceAgeCam" },
   ],
 };

@@ -142,10 +142,27 @@
       width: 100px; /* Adjust the size of the logo */
       height: auto; /* Maintain aspect ratio */
     }
+    .logo-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
     .logo-unil {
       display: block;
-      height: 46px;
+      height: 40px;
       width: auto;
+    }
+    .logo-uzh {
+      display: block;
+      height: 30px;
+      width: auto;
+    }
+    @media (max-width: 600px) {
+      .logos { gap: 10px; }
+      .logo { width: 60px; }
+      .logo-unil { height: 22px; }
+      .logo-uzh { height: 20px; }
     }
     .schedule {
       width: 100%;
@@ -182,7 +199,10 @@
 <body>
   <!-- Logos (top right) -->
   <div class="logos">
-    <a href="https://www.unil.ch" target="_blank"><img src="logo_unil_orange.svg" alt="Université de Lausanne (UNIL)" class="logo-unil"></a>
+    <div class="logo-stack">
+      <a href="https://www.unil.ch" target="_blank"><img src="logo_unil_orange.svg" alt="Université de Lausanne (UNIL)" class="logo-unil"></a>
+      <a href="https://www.uzh.ch" target="_blank"><img src="logo_uzh_orange.svg" alt="Universität Zürich (UZH)" class="logo-uzh"></a>
+    </div>
     <a href="https://iceagecam.ch" target="_blank"><img src="Iceagecam_Logo_2.png" alt="IceAgeCam Logo" class="logo"></a>
   </div>
 

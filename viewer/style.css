@@ -94,12 +94,15 @@ select { background: rgba(255,255,255,.07); color: var(--text); border: 1px soli
 }
 #lang { flex-shrink: 0; align-self: center; }
 /* "More info" button + logos */
-#brand { position: fixed; top: 16px; left: 16px; z-index: 5; display: flex; flex-direction: row;
-  align-items: center; gap: 14px; }
+#brand { position: fixed; top: 16px; left: 16px; z-index: 5; display: grid; grid-auto-flow: column;
+  grid-template-rows: auto auto; align-items: center; justify-items: start; gap: 6px 14px; }
+#brand .back, #brand a:not(:has(img[src*="unil"], img[src*="uzh"])) { grid-row: span 2; }   /* UNIL above UZH */
 #brand img { display: block; height: 56px; width: auto; }
-#brand a:has(img[src*="unil"]) img { height: 30px; }
+#brand a:has(img[src*="unil"]) img { height: 24px; }
+#brand a:has(img[src*="uzh"]) img { height: 18px; }
 #brand .back { font-size: 12px; color: var(--text); text-decoration: none; background: var(--glass); border: 1px solid var(--line);
   border-radius: 8px; padding: 7px 12px; white-space: nowrap; }
 #brand .back:hover, #brand .back:focus-visible { border-color: var(--accent); color: var(--accent); }
 body.noui #brand { display: none; }
-@media (max-width: 700px) { #brand img { height: 34px; } #brand a:has(img[src*="unil"]) img { height: 24px; } }
+@media (max-width: 700px) { #brand img { height: 34px; } #brand a:has(img[src*="unil"]) img { height: 16px; }
+  #brand a:has(img[src*="uzh"]) img { height: 14px; } }

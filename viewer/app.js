@@ -12,13 +12,18 @@ const fmt = (x) => Math.round(x).toLocaleString("en-US").replace(/,/g, " ");
 const DATA = new URLSearchParams(location.search).get("data") || (window.ALPS3D_CONFIG && window.ALPS3D_CONFIG.data) || "data/{name}";
 const url = (name) => DATA.replace("{name}", name);
 
+async function getJSON(u) {
+  const r = await fetch(u);
+  if (!r.ok) throw new Error(`${u}: ${r.status}`);
+  return r.json();
+}
 let meta;
-try { meta = await (await fetch(url("meta.json"))).json(); }
+try { meta = await getJSON(url("meta.json")); }
 catch {
-  try { meta = await (await fetch(url("meta_base.json"))).json(); }
+  try { meta = await getJSON(url("meta_base.json")); }
   catch (e) {
-    $("loading").textContent = "The data could not be loaded. Please try again later.";
-    throw new Error(`no data at ${url("meta.json")}`);
+    $("loading").textContent = tr("noData");
+    throw e;
   }
 }
 
