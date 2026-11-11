@@ -5,7 +5,7 @@ import { OrbitControls } from "three/addons/OrbitControls.js";
 
 const $ = (id) => document.getElementById(id);
 const FILM = new URLSearchParams(location.search).get("film") || "film.mp4", FILM_CACHE = "stm-film-v1";
-const NX = 1571, NY = 1007;                               // terrain.bin: int16 elevation (m), 250 m grid, rows north -> south
+const NX0 = 1571, NY0 = 1007, STEP = 2;                  // terrain.bin: int16 elevation (m), 250 m grid, rows north -> south
 const SIZE_X = 1.40, SIZE_Z = 0.90, EXAG = 1.8;           // the wooden relief: 1.40 x 0.90 m, ~1:280 000, heights x1.8
 const SCALE = SIZE_X / 392400;                            // metres of model per metre of terrain
 const TOP = 0.92;                                         // height of the relief base above the floor (m)
@@ -14,19 +14,19 @@ const TOP = 0.92;                                         // height of the relie
 const lang = ["fr", "de"].includes((navigator.language || "en").slice(0, 2)) ? navigator.language.slice(0, 2) : "en";
 const T = {
   en: { title: "Swiss Time Machine · model", sub: "The exhibit film, with its sound, projected on the relief",
-    dl: "Save the film on this headset", pick: "Choose the film file on this headset", dling: "Downloading", ready: "Film saved on this headset: works offline.",
+    dl: "Save the film on this headset", pick: "Choose the film file on this headset", change: "Change the film file", dling: "Downloading", ready: "Film saved on this headset: works offline.",
     enter: "Enter · mixed reality", noxr: "Open this page in the Meta Quest browser to enter mixed reality.",
     help: ["Controls", "Right trigger: play / pause", "Right stick left / right: rewind / fast forward", "A: back to the start",
       "Left stick: left / right to rotate, up / down to zoom", "B or Y: reset the view and show this help",
       "Walk around the model!", "Press any button to start"] },
   fr: { title: "Swiss Time Machine · maquette", sub: "Le film de l’exposition, avec sa bande son, projeté sur le relief",
-    dl: "Enregistrer le film dans le casque", pick: "Choisir le fichier du film dans le casque", dling: "Téléchargement", ready: "Film enregistré dans le casque : fonctionne hors ligne.",
+    dl: "Enregistrer le film dans le casque", pick: "Choisir le fichier du film dans le casque", change: "Changer le fichier du film", dling: "Téléchargement", ready: "Film enregistré dans le casque : fonctionne hors ligne.",
     enter: "Entrer · réalité mixte", noxr: "Ouvrez cette page dans le navigateur du Meta Quest pour entrer en réalité mixte.",
     help: ["Commandes", "Gâchette droite : lecture / pause", "Stick droit gauche / droite : reculer / avancer", "A : revenir au début",
       "Stick gauche : gauche / droite pour tourner, haut / bas pour zoomer", "B ou Y : réinitialiser la vue et revoir cette aide",
       "Tournez autour de la maquette !", "Appuyez sur un bouton pour commencer"] },
   de: { title: "Swiss Time Machine · Modell", sub: "Der Ausstellungsfilm mit Ton, projiziert auf das Relief",
-    dl: "Film auf dem Headset speichern", pick: "Filmdatei auf dem Headset wählen", dling: "Herunterladen", ready: "Film auf dem Headset gespeichert: funktioniert offline.",
+    dl: "Film auf dem Headset speichern", pick: "Filmdatei auf dem Headset wählen", change: "Filmdatei wechseln", dling: "Herunterladen", ready: "Film auf dem Headset gespeichert: funktioniert offline.",
     enter: "Eintreten · Mixed Reality", noxr: "Öffnen Sie diese Seite im Browser der Meta Quest, um in Mixed Reality einzutreten.",
     help: ["Bedienung", "Rechter Trigger: Wiedergabe / Pause", "Rechter Stick links / rechts: zurück / vorspulen", "A: zurück zum Anfang",
       "Linker Stick: links / rechts drehen, oben / unten zoomen", "B oder Y: Ansicht zurücksetzen und diese Hilfe zeigen",
@@ -57,8 +57,9 @@ scene.add(rig);
 const video = $("film");
 const vtex = new THREE.VideoTexture(video);
 vtex.colorSpace = THREE.SRGBColorSpace;
-vtex.minFilter = THREE.LinearFilter;
-vtex.generateMipmaps = false;
+vtex.minFilter = THREE.LinearMipmapLinearFilter;          // mipmaps: no shimmering when seen from a distance
+vtex.generateMipmaps = true;
+vtex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
 
 const model = new THREE.Group();                          // furniture + wooden block + projected relief
 model.position.set(0, 0, -1.3);
@@ -77,7 +78,11 @@ model.add(shadeBox(1.5, TOP - 0.12, 1.1, 0x2b2b2e, (TOP - 0.12) / 2));   // furn
 relief.add(shadeBox(SIZE_X, 0.12, SIZE_Z, 0xc9a273, -0.06));            // 12 cm wooden block
 
 async function buildRelief() {
-  const h = new Int16Array(await (await fetch("terrain.bin")).arrayBuffer());
+  const h0 = new Int16Array(await (await fetch("terrain.bin")).arrayBuffer());
+  const NX = Math.ceil(NX0 / STEP), NY = Math.ceil(NY0 / STEP);   // 500 m mesh: light for the Quest
+  const h = new Int16Array(NX * NY);
+  for (let j = 0; j < NY; j++)
+    for (let i = 0; i < NX; i++) h[j * NX + i] = h0[Math.min(j * STEP, NY0 - 1) * NX0 + Math.min(i * STEP, NX0 - 1)];
   const n = NX * NY, pos = new Float32Array(3 * n), uv = new Float32Array(2 * n);
   for (let j = 0; j < NY; j++)
     for (let i = 0; i < NX; i++) {
@@ -131,7 +136,9 @@ async function cachedFilm() {
 function useFilm(blob) {
   video.src = URL.createObjectURL(blob);
   $("dl").hidden = true;
-  $("pickLabel").hidden = true;
+  $("pickText").textContent = T.change;
+  $("pickLabel").classList.add("small");
+  $("pickLabel").hidden = false;
   $("status").textContent = T.ready;
   checkXR();
 }
