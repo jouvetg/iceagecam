@@ -1,0 +1,10 @@
+{
+  "name": "Swiss Time Machine · Model",
+  "short_name": "Time Machine",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0d10",
+  "theme_color": "#ff7738",
+  "icons": [{ "src": "icon.png", "sizes": "512x512", "type": "image/png" }]
+}
