@@ -1,705 +1,698 @@
-// Swiss Time Machine 3D viewer: IGM ice-surface heights displaced on the GPU, GlacierGAN texture draped on top.
+// Swiss Time Machine · maquette: the exhibit film (with its sound, in a loop) projected on the animated relief
+// (simulated ice surface), as a large model on the floor that one explores with the sticks, in VR on Meta Quest.
+// Everything is stored on the headset after the first opening (service worker + Cache Storage).
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/OrbitControls.js";
-import { t as tr, lang, setLang, onLangChange } from "./i18n.js";
 
 const $ = (id) => document.getElementById(id);
-const pad = (k) => String(k).padStart(4, "0");
-const fmt = (x) => Math.round(x).toLocaleString("en-US").replace(/,/g, " ");
+const FILM = new URLSearchParams(location.search).get("film") || "film.mp4", FILM_CACHE = "stm-film-v1";
+const NX0 = 1571, NY0 = 1007;                             // terrain.bin: int16 elevation (m), 250 m grid, rows north -> south
+const D = 251500 / 392400;                                // depth / width of the map
+const EXAG = 2;                                           // vertical exaggeration
+const WIDTH = 30;                                         // initial width of the model on the floor (m)
+const START_HEIGHT = 7;                                   // the user floats this much above the floor (m)
 
-// data location
-// data URL template from config.js (or ?data=…), "{name}" = file name
-const DATA = new URLSearchParams(location.search).get("data") || (window.ALPS3D_CONFIG && window.ALPS3D_CONFIG.data) || "data/{name}";
-const url = (name) => DATA.replace("{name}", name);
+// texts
+const lang = ["fr", "de"].includes((navigator.language || "en").slice(0, 2)) ? navigator.language.slice(0, 2) : "en";
+const T = {
+  en: { title: "Swiss Time Machine · model", sub: "The exhibit film, with its sound, projected on the moving relief",
+    dl: "Save the film on this headset", pick: "Choose the film file on this headset", change: "Change the film file",
+    dling: "Downloading", ready: "Film saved on this headset: works offline.", enter: "Enter · VR",
+    noxr: "Open this page in the Meta Quest browser to enter VR.",
+    help: ["Controls", "Left stick: move over the model, where you look", "Right stick left / right: turn",
+      "Right stick up / down: enlarge / shrink the model", "Right trigger: play / pause · A: back to the start",
+      "Grip: faster · B or Y: back to the start position and this help", "Press any button to start"] },
+  fr: { title: "Swiss Time Machine · maquette", sub: "Le film de l’exposition, avec sa bande son, projeté sur le relief animé",
+    dl: "Enregistrer le film dans le casque", pick: "Choisir le fichier du film dans le casque", change: "Changer le fichier du film",
+    dling: "Téléchargement", ready: "Film enregistré dans le casque : fonctionne hors ligne.", enter: "Entrer · VR",
+    noxr: "Ouvrez cette page dans le navigateur du Meta Quest pour entrer en VR.",
+    help: ["Commandes", "Stick gauche : se déplacer au-dessus de la maquette, là où vous regardez", "Stick droit gauche / droite : tourner",
+      "Stick droit haut / bas : agrandir / réduire la maquette", "Gâchette droite : lecture / pause · A : retour au début du film",
+      "Grip : plus vite · B ou Y : position de départ et cette aide", "Appuyez sur un bouton pour commencer"] },
+  de: { title: "Swiss Time Machine · Modell", sub: "Der Ausstellungsfilm mit Ton, projiziert auf das bewegte Relief",
+    dl: "Film auf dem Headset speichern", pick: "Filmdatei auf dem Headset wählen", change: "Filmdatei wechseln",
+    dling: "Herunterladen", ready: "Film auf dem Headset gespeichert: funktioniert offline.", enter: "Eintreten · VR",
+    noxr: "Öffnen Sie diese Seite im Browser der Meta Quest, um in VR einzutreten.",
+    help: ["Bedienung", "Linker Stick: über das Modell bewegen, in Blickrichtung", "Rechter Stick links / rechts: drehen",
+      "Rechter Stick oben / unten: Modell vergrössern / verkleinern", "Rechter Trigger: Wiedergabe / Pause · A: Filmanfang",
+      "Grip: schneller · B oder Y: Startposition und diese Hilfe", "Beliebige Taste drücken, um zu starten"] },
+}[lang];
+document.documentElement.lang = lang;
+$("title").textContent = T.title;
+$("sub").textContent = T.sub;
+$("enter").textContent = T.enter;
 
-async function getJSON(u) {
-  const r = await fetch(u);
-  if (!r.ok) throw new Error(`${u}: ${r.status}`);
-  return r.json();
-}
-let meta;
-try { meta = await getJSON(url("meta.json")); }
-catch {
-  try { meta = await getJSON(url("meta_base.json")); }
-  catch (e) {
-    $("loading").textContent = tr("noData");
-    throw e;
-  }
-}
-
-// optional "More info" button and logos (config.js: home, logos)
-if (window.ALPS3D_CONFIG?.home) {
-  const { home, logos = [] } = window.ALPS3D_CONFIG;
-  const box = document.createElement("div");
-  box.id = "brand";
-  box.innerHTML = `<a class="back" href="${home}" data-i18n="back"></a>`
-    + logos.map((l) => `<a href="${l.href || home}"${l.href ? ' target="_blank"' : ""}><img src="${l.src}" alt="${l.alt || ""}"></a>`).join("");
-  document.body.appendChild(box);
-}
-// packed files read by byte range (web), or one file per frame (local)
-const PACKS = meta.packs || null;
-const [XMIN, YMIN, XMAX, YMAX] = meta.bounds;
-const W = (XMAX - XMIN) / 1000, D = (YMAX - YMIN) / 1000;            // scene units: km
-const NF = meta.times.length;
-// grid index (cell centres) = uv * A + B
-const LEVELS = [
-  { nx: meta.nx, ny: meta.ny, A: [meta.nx - 1, meta.ny - 1], B: [0, 0], tex: "tex0", h: "h0" },       // 250 m + full texture
-  { nx: meta.nx1, ny: meta.ny1, A: [meta.nx1 - 1, meta.ny1 - 1], B: [0, 0], tex: "tex1", h: "h1" },   // 500 m + half texture
-];
-// optional native 125 m grid
-if (meta.native && (PACKS ? PACKS.native : (await fetch(url("base00.bin.gz"), { method: "HEAD" }).catch(() => null))?.ok))
-  LEVELS[2] = { ...meta.native, tex: "tex0", h: "h00" };
-
-// loading
-async function gunzip(u) {
-  const r = await fetch(u);
-  if (!r.ok) throw new Error(`${u}: ${r.status}`);
-  return new Response(r.body.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
-}
-const unzip = (bytes) => new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
-async function fetchRange(name, start, len) {
-  const r = await fetch(url(name), { headers: { Range: `bytes=${start}-${start + len - 1}` } });
-  if (!r.ok) throw new Error(`${name}: ${r.status}`);
-  const buf = await r.arrayBuffer();
-  return r.status === 206 ? buf : buf.slice(start, start + len);   // server ignored the Range header
-}
-
-// priority queue: user requests before prefetching
-const MAXC = 6;
-let active = 0, seq = 0;
-const queue = [];
-function schedule(fn, prio) {
-  return new Promise((res, rej) => { queue.push({ fn, prio, s: seq++, res, rej }); pump(); });
-}
-function pump() {
-  while (active < MAXC && queue.length) {
-    let b = 0;
-    for (let i = 1; i < queue.length; i++)
-      if (queue[i].prio > queue[b].prio || (queue[i].prio === queue[b].prio && queue[i].s > queue[b].s)) b = i;
-    const job = queue.splice(b, 1)[0];
-    active++;
-    job.fn().then(job.res, job.rej).finally(() => { active--; pump(); });
-  }
-}
-
-// decode an image before showing it (no flicker)
-async function decoded(src) {
-  const im = new Image();
-  im.src = src;
-  try { await im.decode(); } catch {}
-  return src;
-}
-
-async function loadFiles(level, k) {
-  const L = LEVELS[level];
-  const [buf, img, tl] = await Promise.all([
-    gunzip(url(`${L.h}/${pad(k)}.bin.gz`)),
-    fetch(url(`${L.tex}/${pad(k)}.jpg`)).then((r) => r.blob()).then((b) => createImageBitmap(b)),
-    decoded(url(`timeline/${pad(k)}.png`)),
-  ]);
-  return { buf, img, tl };
-}
-
-// playback frames are fetched in blocks; paused full-resolution frames one by one
-const blocks = new Map();
-function playBlock(b) {
-  let p = blocks.get(b);
-  if (p) { blocks.delete(b); blocks.set(b, p); return p; }
-  const P = PACKS.play, fr = P.frames, k0 = b * P.block, k1 = Math.min(fr.length, k0 + P.block) - 1;
-  const start = fr[k0][1], end = fr[k1][1] + fr[k1].slice(2).reduce((a, x) => a + x, 0);
-  p = fetchRange(P.files[fr[k0][0]], start, end - start).then((buf) => ({ start, buf }));
-  p.catch(() => blocks.delete(b));
-  blocks.set(b, p);
-  while (blocks.size > 4) blocks.delete(blocks.keys().next().value);
-  return p;
-}
-const jpeg = (bytes) => createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
-async function loadPacked(level, k) {
-  if (level === 1) {
-    const f = PACKS.play.frames[k], b = Math.floor(k / PACKS.play.block), [lh, lt, ll] = f.slice(2);
-    const { start, buf } = state.playing || state.xr || blocks.has(b) ? await playBlock(b)
-      : { start: f[1], buf: await fetchRange(PACKS.play.files[f[0]], f[1], lh + lt + ll) };
-    const o = f[1] - start;
-    const [hb, img, tl] = await Promise.all([
-      unzip(new Uint8Array(buf, o, lh)),
-      jpeg(new Uint8Array(buf, o + lh, lt)),
-      decoded(URL.createObjectURL(new Blob([new Uint8Array(buf, o + lh + lt, ll)], { type: "image/png" }))),
-    ]);
-    return { buf: hb, img, tl };
-  }
-  const nq = PACKS.native?.frames[k];
-  if (level === 2 && PACKS.native.parts.includes("tex0")) {
-    const all = await fetchRange(PACKS.native.files[nq[0]], nq[1], nq[2] + nq[3]);
-    const [hb, img] = await Promise.all([unzip(new Uint8Array(all, 0, nq[2])), jpeg(new Uint8Array(all, nq[2], nq[3]))]);
-    return { buf: hb, img, tl: null };
-  }
-  const q = PACKS.hq.frames[k];
-  if (level === 0) {
-    const all = await fetchRange(PACKS.hq.files[q[0]], q[1], q[2] + q[3]);
-    const [hb, img] = await Promise.all([unzip(new Uint8Array(all, 0, q[2])), jpeg(new Uint8Array(all, q[2], q[3]))]);
-    return { buf: hb, img, tl: null };
-  }
-  const [hb, img] = await Promise.all([
-    fetchRange(PACKS.native.files[nq[0]], nq[1], nq[2]).then(unzip),
-    fetchRange(PACKS.hq.files[q[0]], q[1] + q[2], q[3]).then(jpeg),
-  ]);
-  return { buf: hb, img, tl: null };
-}
-
-const cache = new Map();          // "level:k" -> {p, data}
-const CACHE_MAX = [3, 60, 2];
-function frame(level, k, prio = 1e6) {
-  const key = `${level}:${k}`;
-  let e = cache.get(key);
-  if (e) { cache.delete(key); cache.set(key, e); return e.p; }
-  e = {};
-  const L = LEVELS[level], n = L.nx * L.ny;
-  e.p = schedule(async () => {
-    await ensureLevel(level);
-    const { buf, img, tl } = await (PACKS ? loadPacked(level, k) : loadFiles(level, k));
-    e.data = { level, k, d: new Int16Array(buf, 0, n), thk: new Uint16Array(buf, 2 * n, n), vel: new Uint16Array(buf, 4 * n, n), img, tl };
-    return e.data;
-  }, prio);
-  e.p.catch(() => cache.delete(key));
-  cache.set(key, e);
-  trim(level);
-  return e.p;
-}
-function trim(level) {
-  const keys = [...cache.keys()].filter((k) => k.startsWith(level + ":"));
-  for (let i = 0; i < keys.length - CACHE_MAX[level]; i++) {
-    const e = cache.get(keys[i]);
-    if (e.data && (e.data === shown || e.data === shownNext)) continue;
-    if (e.data) e.data.img.close?.();
-    if (e.data?.tl?.startsWith("blob:") && $("timeline").getAttribute("src") !== e.data.tl) URL.revokeObjectURL(e.data.tl);
-    cache.delete(keys[i]);
-  }
-}
-
-// bed at t0 (int16, 250 m) and its 500 m subsample
-const base0 = new Int16Array(await gunzip(url("base.bin.gz")));
-const base1 = new Int16Array(LEVELS[1].nx * LEVELS[1].ny);
-for (let j = 0; j < LEVELS[1].ny; j++)
-  for (let i = 0; i < LEVELS[1].nx; i++) base1[j * LEVELS[1].nx + i] = base0[2 * j * meta.nx + 2 * i];
-const BASES = [base0, base1, null];
-async function ensureLevel(level) {     // native level: bed + GPU buffers created on first use
-  if (!BASES[level]) BASES[level] = new Int16Array(await gunzip(url("base00.bin.gz")));
-  GPU[level] ??= makeLevelTextures(LEVELS[level]);
-}
-
-// renderer / scene
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: false });
+// scene
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
-renderer.setClearColor(0x000000, 0);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType("local-floor");
 $("scene").appendChild(renderer.domElement);
-const floatLinear = renderer.extensions.has("OES_texture_float_linear");
-const maxAniso = renderer.capabilities.getMaxAnisotropy();
-
+renderer.domElement.addEventListener("webglcontextlost", (e) => {   // the headset ran out of graphics memory
+  e.preventDefault();
+  renderer.xr.getSession()?.end();
+  $("status").textContent = "Display lost (memory). Reload the page" + (location.search.includes("res=500") ? "." : ", or open it with ?res=500 (lighter).");
+  $("loading").hidden = true;
+});
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x000000, 300, 1500);
-const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.2, 6000);
+scene.background = new THREE.Color(0x0b0d10);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 500);
+camera.position.set(0, 18, 16);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.maxPolarAngle = Math.PI * 0.47;
-controls.minDistance = 3;
-controls.maxDistance = 1200;
-controls.screenSpacePanning = false;
+controls.target.set(0, 0, 0);
+controls.update();
+const rig = new THREE.Group();                            // the user: moved by the sticks, the head moves inside it
+rig.add(camera);
+scene.add(rig);
 
-// two GPU slots per level: current and next frame (blended during playback)
-function makeSlot(L) {
-  const n = L.nx * L.ny;
-  const H = new Float32Array(n), ICE = new Float32Array(2 * n);
-  const filt = floatLinear ? THREE.LinearFilter : THREE.NearestFilter;
-  const hTex = new THREE.DataTexture(H, L.nx, L.ny, THREE.RedFormat, THREE.FloatType);
-  const iTex = new THREE.DataTexture(ICE, L.nx, L.ny, THREE.RGFormat, THREE.FloatType);
-  for (const t of [hTex, iTex]) { t.magFilter = t.minFilter = filt; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; }
-  const cTex = new THREE.Texture();
-  cTex.colorSpace = THREE.SRGBColorSpace;
-  cTex.flipY = false;
-  cTex.anisotropy = maxAniso;
-  cTex.minFilter = THREE.LinearMipmapLinearFilter;
-  cTex.generateMipmaps = true;
-  return { H, ICE, hTex, iTex, cTex, f: null };
-}
-function makeLevelTextures(L) {
-  return { slots: [makeSlot(L), makeSlot(L)], size: new THREE.Vector2(L.nx, L.ny), map: new THREE.Vector4(...L.A, ...L.B) };
-}
-const GPU = [makeLevelTextures(LEVELS[0]), makeLevelTextures(LEVELS[1]), null];
+const video = $("film");
+video.loop = true;
+const vtex = new THREE.VideoTexture(video);
+vtex.colorSpace = THREE.SRGBColorSpace;
+vtex.minFilter = THREE.LinearMipmapLinearFilter;          // mipmaps: no shimmering when seen from a distance
+vtex.generateMipmaps = true;
+vtex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
 
-// colour maps (stored linear)
-const ramps = {
-  1: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b", "#1a0b3d"],          // thickness 0-2000 m
-  2: ["#000004", "#3b0f70", "#8c2981", "#de4968", "#fe9f6d", "#fcfdbf"],          // speed 1-1000 m/a (log)
-};
-const lutData = new Uint8Array(256 * 2 * 4);
-[1, 2].forEach((m, row) => {
-  const cs = ramps[m].map((h) => new THREE.Color(h));   // Color() converts sRGB hex -> linear
-  for (let i = 0; i < 256; i++) {
-    const x = (i / 255) * (cs.length - 1), a = Math.min(Math.floor(x), cs.length - 2), f = x - a;
-    const c = cs[a].clone().lerp(cs[a + 1], f);
-    lutData.set([c.r * 255, c.g * 255, c.b * 255, 255], (row * 256 + i) * 4);
-  }
-});
-const lut = new THREE.DataTexture(lutData, 256, 2);
-lut.magFilter = lut.minFilter = THREE.LinearFilter;
-lut.needsUpdate = true;
-
-const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
-  uH: { value: null }, uIce: { value: null }, uTex: { value: null }, uLut: { value: lut },
-  uH2: { value: null }, uIce2: { value: null }, uTex2: { value: null }, uMix: { value: 0 },
-  uHSize: { value: new THREE.Vector2(1, 1) }, uMap: { value: new THREE.Vector4(1, 1, 0, 0) }, uSize: { value: new THREE.Vector2(W, D) },
-  uExag: { value: 2 }, uBottom: { value: -6 }, uMode: { value: 0 }, uOpacity: { value: 0.75 },
-  uShade: { value: 0 }, uSun: { value: new THREE.Vector3() },
-}]);
-
-const material = new THREE.ShaderMaterial({
-  uniforms, fog: true, side: THREE.DoubleSide,
-  vertexShader: /* glsl */ `
-    uniform sampler2D uH, uH2; uniform vec2 uHSize, uSize; uniform vec4 uMap; uniform float uExag, uBottom, uMix, uShade;
-    attribute float aSkirt;
-    varying vec2 vUv; varying vec3 vN; varying float vSkirt, vY;
-    #include <fog_pars_vertex>
-    float hAt(vec2 uv) {
-      vec2 t = (uv * uMap.xy + uMap.zw + 0.5) / uHSize;
-      float h = texture2D(uH, t).r;
-      return uMix > 0.0 ? mix(h, texture2D(uH2, t).r, uMix) : h;
-    }
-    void main() {
-      vUv = uv; vSkirt = aSkirt;
-      float s = uExag / 1000.0;
-      vec2 e = 1.0 / uMap.xy;
-      float h = hAt(uv);
-      vN = vec3(0.0, 1.0, 0.0);
-      if (uShade > 0.0) {
-        float hl = hAt(uv - vec2(e.x, 0.0)), hr = hAt(uv + vec2(e.x, 0.0));
-        float hn = hAt(uv - vec2(0.0, e.y)), hs = hAt(uv + vec2(0.0, e.y));
-        vN = normalize(vec3(-(hr - hl) * s / (2.0 * e.x * uSize.x), 1.0, -(hs - hn) * s / (2.0 * e.y * uSize.y)));
-      }
-      vec3 p = vec3((uv.x - 0.5) * uSize.x, h * s, (uv.y - 0.5) * uSize.y);
-      if (aSkirt > 1.5) p.y = uBottom;
-      vY = p.y;
-      vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
-      gl_Position = projectionMatrix * mvPosition;
-      #include <fog_vertex>
-    }`,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D uTex, uIce, uLut, uTex2, uIce2; uniform vec2 uHSize; uniform vec4 uMap; uniform int uMode;
-    uniform float uOpacity, uShade, uBottom, uMix; uniform vec3 uSun;
-    varying vec2 vUv; varying vec3 vN; varying float vSkirt, vY;
-    #include <fog_pars_fragment>
-    void main() {
-      vec3 col;
-      if (vSkirt > 0.5) {
-        col = mix(vec3(0.035, 0.03, 0.028), vec3(0.16, 0.14, 0.12), clamp((vY - uBottom) / (-uBottom + 1.0), 0.0, 1.0));
-      } else {
-        col = texture2D(uTex, vUv).rgb;
-        if (uMix > 0.0) col = mix(col, texture2D(uTex2, vUv).rgb, uMix);
-        if (uMode > 0) {
-          vec2 it = (vUv * uMap.xy + uMap.zw + 0.5) / uHSize;
-          vec2 ice = texture2D(uIce, it).rg;
-          if (uMix > 0.0) ice = mix(ice, texture2D(uIce2, it).rg, uMix);
-          float a = uMode == 1 ? clamp(ice.r / 2000.0, 0.0, 1.0)
-                               : clamp(log(max(ice.g, 1.0)) / log(1000.0), 0.0, 1.0);
-          vec3 c = texture2D(uLut, vec2(a, uMode == 1 ? 0.25 : 0.75)).rgb;
-          col = mix(col, c, uOpacity * smoothstep(0.5, 8.0, ice.r));
-        }
-        float d = max(dot(normalize(vN), uSun), 0.0);
-        col *= mix(1.0, 0.45 + 0.85 * d, uShade);
-      }
-      gl_FragColor = vec4(col, 1.0);
-      #include <colorspace_fragment>
-      #include <fog_fragment>
-    }`,
-});
-
-// grid mesh with side skirts; vertices at the cell centres plus the domain edges
-function gridUV(n, A, B) {
-  const out = [0];
-  for (let i = 0; i < n; i++) { const u = (i - B) / A; if (u > 1e-6 && u < 1 - 1e-6) out.push(u); }
-  out.push(1);
-  return out;
-}
-function buildGeometry(L) {
-  const us = gridUV(L.nx, L.A[0], L.B[0]), vs = gridUV(L.ny, L.A[1], L.B[1]);
-  const mx = us.length, my = vs.length;
-  const nMain = mx * my, nEdge = 2 * (mx + my) - 4;
-  const uv = new Float32Array((nMain + 2 * nEdge) * 2), sk = new Float32Array(nMain + 2 * nEdge);
-  for (let j = 0; j < my; j++) for (let i = 0; i < mx; i++) {
-    const v = j * mx + i; uv[2 * v] = us[i]; uv[2 * v + 1] = vs[j];
-  }
-  const idx = new Uint32Array(((mx - 1) * (my - 1) + nEdge) * 6);
-  let q = 0;
-  for (let j = 0; j < my - 1; j++) for (let i = 0; i < mx - 1; i++) {
-    const a = j * mx + i, b = a + 1, c = a + mx, d = c + 1;
-    idx[q++] = a; idx[q++] = c; idx[q++] = b; idx[q++] = b; idx[q++] = c; idx[q++] = d;
-  }
-  const ring = [];
-  for (let i = 0; i < mx; i++) ring.push([i, 0]);
-  for (let j = 1; j < my; j++) ring.push([mx - 1, j]);
-  for (let i = mx - 2; i >= 0; i--) ring.push([i, my - 1]);
-  for (let j = my - 2; j > 0; j--) ring.push([0, j]);
-  ring.forEach(([i, j], r) => {
-    const t = nMain + 2 * r, b = t + 1;
-    uv.set([us[i], vs[j]], 2 * t); uv.set([us[i], vs[j]], 2 * b);
-    sk[t] = 1; sk[b] = 2;
-    const r2 = (r + 1) % ring.length, t2 = nMain + 2 * r2, b2 = t2 + 1;
-    idx[q++] = t; idx[q++] = b; idx[q++] = t2; idx[q++] = t2; idx[q++] = b; idx[q++] = b2;
-  });
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(uv.length / 2 * 3), 3));
-  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-  g.setAttribute("aSkirt", new THREE.BufferAttribute(sk, 1));
-  g.setIndex(new THREE.BufferAttribute(idx, 1));
-  return g;
-}
-const terrain = new THREE.Mesh(buildGeometry(LEVELS[0]), material);
-terrain.frustumCulled = false;
-const world = new THREE.Group();
+const world = new THREE.Group();                          // the model, 1 unit = its width; scaled to WIDTH metres
 scene.add(world);
-world.add(terrain);
 
-// Swiss border
-const borderGeo = new THREE.BufferGeometry();
-borderGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(meta.border.length * 3), 3));
-const border = new THREE.LineLoop(borderGeo, new THREE.LineBasicMaterial({ color: 0xff7738, fog: true }));
-border.frustumCulled = false;
-world.add(border);
+// animated relief: surface = terrain node + ice/isostasy change, from two frames blended on the GPU
+const H = { meta: null, data: null, years: null, i0: -1 };
+const uni = { uBase: { value: null }, uA: { value: null }, uB: { value: null }, uMix: { value: 0 },
+  uN: { value: new THREE.Vector2() }, uK: { value: 0 }, uOff: { value: 0 }, uSc: { value: 0 } };
 
-// state
-const state = { k: 0, level: 1, playing: false, mode: 0, exag: 2, fps: 10 };
-let shown = null;           // frame data currently on the GPU
-let shownNext = null;       // next frame, blended in during playback (uMix)
-let cur = null;             // {L, H, thk, vel} for picking (CPU copy of what is shown)
-
-function heightAt(u, v) {   // bilinear, metres, on currently shown grid (blended like the GPU)
-  if (!cur) return 0;
-  const { nx, ny, A, B } = cur.L;
-  const x = Math.min(Math.max(u * A[0] + B[0], 0), nx - 1), y = Math.min(Math.max(v * A[1] + B[1], 0), ny - 1);
-  const i = Math.min(Math.floor(x), nx - 2), j = Math.min(Math.floor(y), ny - 2), fx = x - i, fy = y - j, a = j * nx + i;
-  const at = (H) => (H[a] * (1 - fx) + H[a + 1] * fx) * (1 - fy) + (H[a + nx] * (1 - fx) + H[a + nx + 1] * fx) * fy;
-  const m = uniforms.uMix.value;
-  return m > 0 ? at(cur.H) * (1 - m) + at(cur.H2) * m : at(cur.H);
-}
-const s = () => state.exag / 1000;
-
-function upload(slot, f, base, n) {
-  for (let i = 0; i < n; i++) {
-    slot.H[i] = base[i] + f.d[i];
-    slot.ICE[2 * i] = f.thk[i]; slot.ICE[2 * i + 1] = f.vel[i];
+async function gunzip(url, onChunk) {                     // stream-decompress, chunk by chunk (no extra copy)
+  let r = null, cache = null;                             // kept in Cache Storage: downloaded once, then offline
+  try { cache = await caches.open("stm-relief-v1"); r = await cache.match(url); } catch {}
+  if (!r) {
+    r = await fetch(url);
+    if (r.ok && cache) { try { await cache.put(url, r.clone()); r = await cache.match(url) || r; } catch {} }
   }
-  slot.hTex.needsUpdate = true; slot.iTex.needsUpdate = true;
-  slot.cTex.image = f.img; slot.cTex.needsUpdate = true;
-  slot.f = f;
-}
-// show frame f, blended towards fb with uMix (slots are reused to avoid re-uploads)
-function apply(f, fb = null) {
-  const L = LEVELS[f.level], G = GPU[f.level], base = BASES[f.level], n = L.nx * L.ny;
-  if (G.slots[0].f !== f && G.slots[1].f === f) G.slots.reverse();
-  const [A, B] = G.slots;
-  if (A.f !== f) upload(A, f, base, n);
-  if (fb && B.f !== fb) upload(B, fb, base, n);
-  if (!fb) uniforms.uMix.value = 0;
-  const N = fb ? B : A;
-  uniforms.uH.value = A.hTex; uniforms.uIce.value = A.iTex; uniforms.uTex.value = A.cTex;
-  uniforms.uH2.value = N.hTex; uniforms.uIce2.value = N.iTex; uniforms.uTex2.value = N.cTex;
-  uniforms.uHSize.value.copy(G.size);
-  uniforms.uMap.value.copy(G.map);
-  if (f.tl && $("timeline").getAttribute("src") !== f.tl) $("timeline").src = f.tl;
-  shown = f; shownNext = fb;
-  cur = { L, H: A.H, H2: N.H, thk: f.thk, vel: f.vel };
-  state.shownK = f.k;
-  updateBorder();
-  updateInfo(f.k);
-  $("loading").classList.add("hidden");
+  const rd = r.body.pipeThrough(new DecompressionStream("gzip")).getReader();
+  for (;;) { const { done, value } = await rd.read(); if (done) break; onChunk(value); }
 }
 
-function updateBorder() {
-  const p = borderGeo.attributes.position.array, sc = s();
-  meta.border.forEach(([u, v], i) => {
-    p[3 * i] = (u - 0.5) * W; p[3 * i + 1] = heightAt(u, v) * sc + 0.06 * state.exag; p[3 * i + 2] = (v - 0.5) * D;
+async function buildRelief() {
+  const meta = H.meta = await (await fetch("heights.json")).json();
+  H.years = (await (await fetch("film_years.json")).json()).years;
+  // all frames in one buffer, filled while downloading (keeps the memory use to the data itself)
+  const half = new URLSearchParams(location.search).get("res") === "500";   // lighter mesh if the headset struggles
+  const fx = meta.nx, fy = meta.ny, fsize = fx * fy;
+  const nx = half ? (fx + 1) >> 1 : fx, ny = half ? (fy + 1) >> 1 : fy;
+  H.data = new Uint8Array(meta.n * nx * ny);
+  const frame = new Uint8Array(fsize);
+  let off = 0, fo = 0, nf = 0;
+  for (const part of meta.parts) {
+    await gunzip(part, (c) => {
+      if (!half) { H.data.set(c, off); off += c.length; }
+      else for (let p = 0; p < c.length;) {                // keep every second node of each full frame
+        const k = Math.min(c.length - p, fsize - fo);
+        frame.set(c.subarray(p, p + k), fo); fo += k; p += k;
+        if (fo === fsize) {
+          for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) H.data[(nf * ny + j) * nx + i] = frame[2 * j * fx + 2 * i];
+          fo = 0; nf++;
+        }
+      }
+      $("loading").textContent = `… ${Math.round((100 * (half ? nf * fsize : off)) / (meta.n * fsize))} %`;
+    });
+  }
+  if (half) { meta.nx = nx; meta.ny = ny; meta.stride *= 2; }
+  const NX = meta.nx, NY = meta.ny, n = NX * NY;
+  const t0 = new Int16Array(await (await fetch("terrain.bin")).arrayBuffer()), base = new Float32Array(n);
+  for (let j = 0; j < NY; j++)
+    for (let i = 0; i < NX; i++) base[j * NX + i] = t0[Math.min(j * meta.stride, NY0 - 1) * NX0 + Math.min(i * meta.stride, NX0 - 1)];
+  const tex = (data, type) => {
+    const t = new THREE.DataTexture(data, NX, NY, THREE.RedFormat, type);
+    t.minFilter = t.magFilter = THREE.NearestFilter; t.needsUpdate = true;
+    return t;
+  };
+  uni.uBase.value = tex(base, THREE.FloatType);
+  uni.uA.value = tex(H.data.slice(0, n), THREE.UnsignedByteType);
+  uni.uB.value = tex(H.data.slice(0, n), THREE.UnsignedByteType);
+  uni.uN.value.set(NX, NY);
+  uni.uK.value = EXAG / 392400;                            // metres of terrain -> model units (width = 1)
+  uni.uSc.value = meta.scale; uni.uOff.value = meta.offset;
+
+  const pos = new Float32Array(3 * n), uv = new Float32Array(2 * n);
+  for (let j = 0; j < NY; j++)
+    for (let i = 0; i < NX; i++) {
+      const k = j * NX + i;
+      pos[3 * k] = i / (NX - 1) - 0.5; pos[3 * k + 2] = (j / (NY - 1) - 0.5) * D;
+      uv[2 * k] = i / (NX - 1); uv[2 * k + 1] = 1 - j / (NY - 1);
+    }
+  const idx = new Uint32Array((NX - 1) * (NY - 1) * 6);
+  let p = 0;
+  for (let j = 0; j < NY - 1; j++)
+    for (let i = 0; i < NX - 1; i++) {
+      const a = j * NX + i, b = a + 1, c = a + NX, d = c + 1;
+      idx[p++] = a; idx[p++] = c; idx[p++] = b; idx[p++] = b; idx[p++] = c; idx[p++] = d;
+    }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  const mat = new THREE.MeshBasicMaterial({ map: vtex });
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, uni);
+    sh.vertexShader = sh.vertexShader.replace("#include <common>", `#include <common>
+      uniform sampler2D uBase, uA, uB; uniform float uMix, uK, uOff, uSc; uniform vec2 uN; varying float vShade;
+      float hAt(ivec2 c) {
+        c = clamp(c, ivec2(0), ivec2(uN) - 1);
+        float d = mix(texelFetch(uA, c, 0).r, texelFetch(uB, c, 0).r, uMix) * 255.0 * uSc + uOff;
+        return (texelFetch(uBase, c, 0).r + d) * uK;
+      }`).replace("#include <begin_vertex>", `
+      ivec2 c = ivec2(gl_VertexID % int(uN.x), gl_VertexID / int(uN.x));
+      vec3 transformed = vec3(position.x, hAt(c), position.z);
+      float ex = 2.0 / (uN.x - 1.0), ez = 2.0 * ${D.toFixed(6)} / (uN.y - 1.0);
+      vec3 nrm = normalize(vec3(-(hAt(c + ivec2(1, 0)) - hAt(c - ivec2(1, 0))) / ex, 1.0,
+                                -(hAt(c + ivec2(0, 1)) - hAt(c - ivec2(0, 1))) / ez));
+      vShade = min(1.0, 0.62 + 0.45 * max(0.0, dot(nrm, normalize(vec3(-0.5, 0.8, -0.4)))));`);
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying float vShade;")
+      .replace("#include <map_fragment>", "#include <map_fragment>\ndiffuseColor.rgb *= vShade;");
+  };
+  const mesh = new THREE.Mesh(g, mat);
+  mesh.frustumCulled = false;
+  world.add(mesh);
+  H.ready = true;
+}
+
+const FIX_YEAR = new URLSearchParams(location.search).get("year");   // for tests: freeze the year
+function yearNow() {                                      // year shown by the film now
+  if (FIX_YEAR !== null) return +FIX_YEAR;
+  if (!H.years) return 0;
+  return H.years[Math.min(H.years.length - 1, Math.floor(video.currentTime * 20))];
+}
+function updateRelief() {
+  const m = H.meta;
+  if (!m || !uni.uA.value) return;
+  const f = Math.min(Math.max((yearNow() - m.t0) / m.step, 0), m.n - 1.001), i0 = Math.floor(f), n = m.nx * m.ny;
+  if (i0 !== H.i0) {
+    uni.uA.value.image.data = H.data.subarray(i0 * n, (i0 + 1) * n); uni.uA.value.needsUpdate = true;
+    uni.uB.value.image.data = H.data.subarray((i0 + 1) * n, (i0 + 2) * n); uni.uB.value.needsUpdate = true;
+    H.i0 = i0;
+  }
+  uni.uMix.value = f - i0;
+}
+
+// film: kept in Cache Storage, played from a blob (no network needed afterwards)
+async function cachedFilm() {
+  try { const r = await (await caches.open(FILM_CACHE)).match(FILM); return r ? await r.blob() : null; } catch { return null; }
+}
+video.addEventListener("loadeddata", () => checkXR());
+function useFilm(blob) {
+  video.src = URL.createObjectURL(blob);
+  $("dl").hidden = true;
+  $("pickText").textContent = T.change;
+  $("pickLabel").classList.add("small");
+  $("pickLabel").hidden = false;
+  $("status").textContent = T.ready;
+  checkXR();
+}
+async function keep(blob) {                              // copy into the page's storage: no need to pick it again
+  try {
+    await navigator.storage?.persist?.();
+    await (await caches.open(FILM_CACHE)).put(FILM, new Response(blob, { headers: { "Content-Type": "video/mp4" } }));
+  } catch (e) { console.warn("film not cached", e); }
+  useFilm(blob);
+}
+$("pick").onchange = (e) => { const f = e.target.files[0]; if (f) { $("status").textContent = "…"; keep(f); } };
+async function download() {
+  $("dl").disabled = true;
+  const r = await fetch(FILM, { cache: "no-store" });
+  const total = +r.headers.get("content-length") || 0, reader = r.body.getReader(), parts = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value); got += value.length;
+    $("status").textContent = `${T.dling}… ${total ? Math.round((100 * got) / total) + " %" : (got / 1e6).toFixed(0) + " MB"}`;
+  }
+  keep(new Blob(parts, { type: "video/mp4" }));
+}
+$("dl").textContent = T.dl;
+$("pickText").textContent = T.pick;
+fetch(FILM, { method: "HEAD" }).then((r) => {                // the film next to the page (USB install), if any
+  const mb = r.ok && +r.headers.get("content-length") / 1e6;
+  if (mb > 1 && !video.src) { $("dl").hidden = false; $("dl").textContent = `${T.dl} (${Math.round(mb)} MB)`; }
+}).catch(() => {});
+$("dl").onclick = download;
+
+async function checkXR() {
+  const vr = navigator.xr && await navigator.xr.isSessionSupported("immersive-vr").catch(() => false);
+  $("enter").disabled = !(video.src && video.readyState >= 2 && vr && H.ready);   // film decodable, relief loaded
+  if (!vr && !$("status").textContent.includes(T.noxr)) $("status").textContent += " " + T.noxr;
+}
+
+// XR
+const XR = { prev: {}, help: null, helpAt: 0, helpClosed: 0, helpPending: false, last: 0, userPaused: false };
+$("enter").onclick = async () => {
+  XR.userPaused = false;
+  video.play().catch(() => {});                           // must start inside the click
+  const session = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor", "bounded-floor"] });
+  session.addEventListener("select", (e) => {            // trigger: a user gesture, so play() is always allowed
+    if (video.paused && !XR.userPaused) { video.play().catch(() => {}); return; }
+    if (e.inputSource.handedness !== "right" || XR.help.visible || performance.now() - XR.helpClosed < 500) return;
+    XR.userPaused = !video.paused;
+    XR.userPaused ? video.pause() : video.play().catch(() => {});
   });
-  borderGeo.attributes.position.needsUpdate = true;
+  session.addEventListener("end", () => {
+    video.pause(); XR.help.visible = false; document.body.classList.remove("xr");
+    rig.position.set(0, 0, 0); rig.rotation.set(0, 0, 0); camera.position.set(0, 18, 16); controls.update();
+  });
+  await renderer.xr.setSession(session);
+  renderer.xr.setFoveation?.(1);
+  document.body.classList.add("xr");
+  resetView();
+  XR.helpPending = true;
+};
+
+function resetView() {                                    // high above the southern edge, the whole model in front
+  world.scale.setScalar(WIDTH);
+  world.position.set(0, 0, 0);
+  rig.rotation.set(0, 0, 0);
+  rig.position.set(0, START_HEIGHT, (0.5 * D + 0.12) * WIDTH);
 }
 
-// time navigation
-let want = 0, hqTimer = null;
-async function show(k, { hq = true } = {}) {
-  k = Math.max(0, Math.min(NF - 1, k));
-  want = k; state.k = k;
-  updateInfo(k);
-  const f = await frame(1, k);
-  if (want !== k) return;
-  const hl = hqLevel();
-  if (!(shown && shown.k === k && shown.level === hl)) apply(f);
-  clearTimeout(hqTimer);
-  if (hq && hl !== null && $("hq").checked && !state.playing)
-    hqTimer = setTimeout(async () => {
-      const g = await frame(hl, k);
-      if (want === k && !state.playing) apply(g);
-    }, 250);
+for (const i of [0, 1]) {
+  const c = renderer.xr.getController(i);
+  c.add(new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 0.08), new THREE.MeshBasicMaterial({ color: 0xff7738 })));
+  c.addEventListener("connected", (e) => { if (e.data.handedness === "left") c.add(panel); });
+  rig.add(c);
 }
 
-// full-resolution level shown when paused, for the chosen mesh
-function hqLevel() {
-  if (state.xr && LEVELS[2]) return 2;
-  if (state.mesh === 1) return null;
-  if (PACKS && !PACKS.hq) return LEVELS[2] ? 2 : null;
-  return state.mesh;
+const canvasTex = (w, h) => {
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  return { g: cv.getContext("2d"), tex };
+};
+// wrist panel: year, play state and position in the film
+const P = canvasTex(512, 128);
+const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.04), new THREE.MeshBasicMaterial({ map: P.tex, transparent: true }));
+panel.position.set(0, 0.06, -0.06); panel.rotation.x = -0.9;
+const fmtYear = (y) => (y < 0 ? "−" : "") + Math.round(Math.abs(y)).toLocaleString("en-US").replace(/,/g, " ");
+let lastKey = "";
+function drawPanel() {
+  const g = P.g, d = video.duration || 0, t = video.currentTime;
+  g.clearRect(0, 0, 512, 128);
+  g.fillStyle = "rgba(0,0,0,0.85)"; g.fillRect(0, 0, 512, 128);
+  g.fillStyle = "#ff7738"; g.font = "bold 44px sans-serif";
+  g.fillText(`${video.paused ? "❚❚" : "▶"}  ${fmtYear(yearNow())}`, 20, 60);
+  g.fillStyle = "#555"; g.fillRect(20, 92, 472, 12);
+  g.fillStyle = "#ff7738"; g.fillRect(20, 92, d ? (472 * t) / d : 0, 12);
+  P.tex.needsUpdate = true;
+}
+// controls card, shown when entering and with B / Y
+const HC = canvasTex(1400, 800);
+XR.help = new THREE.Mesh(new THREE.PlaneGeometry(0.98, 0.56), new THREE.MeshBasicMaterial({ map: HC.tex, transparent: true, depthTest: false }));
+XR.help.renderOrder = 20; XR.help.visible = false;
+scene.add(XR.help);
+function showHelp() {
+  const g = HC.g, t = T.help;
+  g.clearRect(0, 0, 1400, 800);
+  g.fillStyle = "rgba(10,14,20,0.92)"; g.beginPath(); g.roundRect(0, 0, 1400, 800, 40); g.fill();
+  g.fillStyle = "#ff7738"; g.font = "bold 72px sans-serif"; g.fillText(t[0], 60, 110);
+  g.fillStyle = "#fff"; g.font = "44px sans-serif";
+  t.slice(1, 6).forEach((l, i) => g.fillText(l, 60, 220 + i * 90, 1280));
+  g.fillStyle = "#9fb0c2"; g.font = "38px sans-serif"; g.textAlign = "center"; g.fillText(t[6], 700, 750); g.textAlign = "left";
+  HC.tex.needsUpdate = true;
+  const xrCam = renderer.xr.getCamera(), head = new THREE.Vector3(), dir = new THREE.Vector3();
+  xrCam.getWorldPosition(head); xrCam.getWorldDirection(dir);
+  if (head.y < 0.5) head.y += 1.6;                        // no pose yet
+  dir.y = 0; if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1).applyQuaternion(rig.quaternion); dir.normalize();
+  XR.help.position.copy(head).addScaledVector(dir, 0.9); XR.help.position.y = head.y - 0.05;
+  XR.help.lookAt(head.x, XR.help.position.y, head.z);
+  XR.help.visible = true;
+  XR.helpAt = performance.now();
 }
 
-function prefetch(from) {
-  for (let i = 1; i <= 24; i++) {
-    let k = from + i;
-    if (k >= NF) k -= NF;
-    frame(1, k, -i);
-  }
+function pressed(src, i) {                                // true once per press
+  const key = src.handedness + i, now = !!src.gamepad.buttons[i]?.pressed, was = XR.prev[key];
+  XR.prev[key] = now;
+  return now && !was;
 }
 
-// playback: fractional frame index, frames k and k+1 blended; waits for data instead of skipping
-const ready = (level, k) => cache.get(`${level}:${k}`)?.data;
-let playPos = 0, lastNow = null;
-function tickPlayback(now) {
-  if (!state.playing) { lastNow = null; return; }
-  const dt = lastNow === null ? 0 : Math.min((now - lastNow) / 1000, 0.25);
-  lastNow = now;
-  const k = Math.floor(playPos);
-  const k1 = k + 1 < NF ? k + 1 : 0;
-  const fa = ready(1, k), fb = ready(1, k1);
-  if (!fa || !fb) { frame(1, k, 1e6); frame(1, k1, 1e6); return; }
-  playPos += dt * state.fps;
-  if (playPos >= k + 1) {
-    playPos = k1;
-    want = state.k = k1;
-    prefetch(k1);
+const head = new THREE.Vector3(), fwd = new THREE.Vector3(), right = new THREE.Vector3();
+function xrUpdate(now, frame) {
+  const dt = XR.last ? Math.min((now - XR.last) / 1000, 0.1) : 0;
+  XR.last = now;
+  const sources = [...frame.session.inputSources].filter((s) => s.gamepad);
+  if (XR.helpPending && frame.getViewerPose(renderer.xr.getReferenceSpace())) { XR.helpPending = false; showHelp(); return; }
+  if (XR.help.visible) {                                  // the card stays until a button or a stick is used
+    let any = false;
+    for (const s of sources) {
+      s.gamepad.buttons.forEach((b, i) => { if (b.pressed && !XR.prev[s.handedness + i]) any = true; XR.prev[s.handedness + i] = b.pressed; });
+      if (s.gamepad.axes.some((a) => Math.abs(a) > 0.5)) any = true;
+    }
+    if (any && now - XR.helpAt > 800) { XR.help.visible = false; XR.helpClosed = performance.now(); }
     return;
   }
-  if (shown !== fa || shownNext !== fb) apply(fa, fb);
-  uniforms.uMix.value = playPos - k;
-  want = state.k = k;
-  updateInfo(k, times[k] + (playPos - k) * ((k1 ? times[k1] : times[k]) - times[k]));
-  updateBorder();
-}
-const ICON_PLAY = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>';
-const ICON_PAUSE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
-$("play").innerHTML = ICON_PLAY;
-function setPlaying(p) {
-  state.playing = p;
-  $("play").innerHTML = p ? ICON_PAUSE : ICON_PLAY;
-  if (p) { playPos = state.k; lastNow = null; prefetch(state.k); } else show(state.k);
-}
-
-// time display
-const times = meta.times, stats = meta.stats;
-// film timeline (1200 px wide): x_px = 1075 + 0.03 t
-function updateInfo(k, t = times[k]) {
-  $("tlMarker").style.left = `${((1075 + 0.03 * t) / 1200) * 100}%`;
-}
-
-const nearestK = (t) => times.reduce((b, x, i) => (Math.abs(x - t) < Math.abs(times[b] - t) ? i : b), 0);
-{
-  const wrap = $("tlWrap");
-  const kAt = (e) => {
-    const r = $("timeline").getBoundingClientRect();
-    return nearestK(((e.clientX - r.left) / r.width * 1200 - 1075) / 0.03);
-  };
-  let drag = false;
-  wrap.addEventListener("pointerdown", (e) => { drag = true; wrap.setPointerCapture(e.pointerId); if (state.playing) setPlaying(false); show(kAt(e)); });
-  wrap.addEventListener("pointermove", (e) => { if (drag) show(kAt(e)); });
-  wrap.addEventListener("pointerup", () => { drag = false; });
-}
-
-// cities
-const cityEls = meta.cities.map((c) => {
-  const el = document.createElement("div");
-  el.className = "city"; el.textContent = tr("cityNames")[c.name] ?? c.name;
-  $("labels").appendChild(el);
-  return el;
-});
-const tmpV = new THREE.Vector3();
-function updateLabels() {
-  const on = $("showCities").checked;
-  meta.cities.forEach((c, i) => {
-    const el = cityEls[i];
-    if (!on) { el.style.display = "none"; return; }
-    tmpV.set((c.u - 0.5) * W, heightAt(c.u, c.v) * s() + 0.05, (c.v - 0.5) * D).project(camera);
-    if (tmpV.z > 1 || Math.abs(tmpV.x) > 1.1 || Math.abs(tmpV.y) > 1.1) { el.style.display = "none"; return; }
-    el.style.display = "";
-    el.style.left = `${(tmpV.x * 0.5 + 0.5) * innerWidth}px`;
-    el.style.top = `${(-tmpV.y * 0.5 + 0.5) * innerHeight}px`;
-  });
-}
-
-// picking (CPU ray-march)
-const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
-function pick(cx, cy) {
-  if (!cur) return null;
-  ndc.set((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
-  ray.setFromCamera(ndc, camera);
-  const o = ray.ray.origin, d = ray.ray.direction, sc = s();
-  const box = new THREE.Box3(new THREE.Vector3(-W / 2, -0.5, -D / 2), new THREE.Vector3(W / 2, 4.8 * state.exag, D / 2));
-  const p = new THREE.Vector3();
-  let t0 = 0;
-  if (!box.containsPoint(o)) {
-    if (!ray.ray.intersectBox(box, p)) return null;
-    t0 = p.distanceTo(o);
-  }
-  const below = (p) => p.y <= heightAt(p.x / W + 0.5, p.z / D + 0.5) * sc;
-  const step = Math.max(0.04, camera.position.distanceTo(controls.target) / 500);
-  let prev = t0;
-  for (let t = t0; t < t0 + 2000; t += step) {
-    p.copy(o).addScaledVector(d, t);
-    if (!box.containsPoint(p) && t > t0) return null;
-    if (below(p)) {
-      let a = prev, b = t;
-      for (let i = 0; i < 20; i++) { const m = (a + b) / 2; p.copy(o).addScaledVector(d, m); below(p) ? (b = m) : (a = m); }
-      return { u: Math.min(Math.max(p.x / W + 0.5, 0), 1), v: Math.min(Math.max(p.z / D + 0.5, 0), 1) };
+  for (const s of sources) {
+    const gp = s.gamepad, [x, y] = gp.axes.length >= 4 ? [gp.axes[2], gp.axes[3]] : [gp.axes[0] || 0, gp.axes[1] || 0];
+    const sx = Math.abs(x) > 0.15 ? x : 0, sy = Math.abs(y) > 0.15 ? y : 0;
+    const boost = gp.buttons[1]?.pressed ? 3 : 1;
+    if (pressed(s, 5)) { resetView(); showHelp(); return; }
+    if (s.handedness === "left") {                        // walk where you look (horizontal only), speed follows the model size
+      if (sx || sy) {
+        camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
+        right.set(-fwd.z, 0, fwd.x);
+        const v = 2.5 * (world.scale.x / WIDTH) * boost * dt;
+        rig.position.addScaledVector(fwd, -sy * v).addScaledVector(right, sx * v);
+      }
+    } else {
+      if (pressed(s, 4)) { video.currentTime = 0; video.play(); }
+      head.setFromMatrixPosition(camera.matrixWorld);
+      if (Math.abs(x) > 0.15 && Math.abs(x) > Math.abs(y)) {   // smooth turn around the head
+        rig.rotation.y -= x * Math.abs(x) * 1.4 * dt;
+        rig.updateMatrixWorld(true);
+        const h2 = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+        rig.position.x += head.x - h2.x; rig.position.z += head.z - h2.z;
+      }
+      if (Math.abs(y) > 0.3 && Math.abs(y) > Math.abs(x)) {       // enlarge / shrink the model around the point under the head
+        const k = Math.min(Math.max(1 - y * dt * 0.8, 0.5), 2), w = world.scale.x * k;
+        if (w > 3 && w < 300) {
+          world.position.x = head.x + (world.position.x - head.x) * k;
+          world.position.z = head.z + (world.position.z - head.z) * k;
+          world.scale.setScalar(w);
+        }
+      }
     }
-    prev = t;
   }
-  return null;
-}
-function utmToLatLon(E, N, zone = 32) {
-  const a = 6378137, f = 1 / 298.257223563, k0 = 0.9996, e2 = f * (2 - f), ep2 = e2 / (1 - e2);
-  const x = E - 500000, mu = N / k0 / (a * (1 - e2 / 4 - 3 * e2 * e2 / 64 - 5 * e2 ** 3 / 256));
-  const e1 = (1 - Math.sqrt(1 - e2)) / (1 + Math.sqrt(1 - e2));
-  const p1 = mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * Math.sin(2 * mu) + (21 * e1 * e1 / 16 - 55 * e1 ** 4 / 32) * Math.sin(4 * mu)
-    + (151 * e1 ** 3 / 96) * Math.sin(6 * mu) + (1097 * e1 ** 4 / 512) * Math.sin(8 * mu);
-  const C = ep2 * Math.cos(p1) ** 2, T = Math.tan(p1) ** 2, sn = Math.sin(p1);
-  const Nn = a / Math.sqrt(1 - e2 * sn * sn), R = a * (1 - e2) / Math.pow(1 - e2 * sn * sn, 1.5), Dd = x / (Nn * k0);
-  const lat = p1 - (Nn * Math.tan(p1) / R) * (Dd * Dd / 2 - (5 + 3 * T + 10 * C - 4 * C * C - 9 * ep2) * Dd ** 4 / 24
-    + (61 + 90 * T + 298 * C + 45 * T * T - 252 * ep2 - 3 * C * C) * Dd ** 6 / 720);
-  const lon = ((zone - 1) * 6 - 177) * Math.PI / 180 + (Dd - (1 + 2 * T + C) * Dd ** 3 / 6
-    + (5 - 2 * C + 28 * T - 3 * C * C + 8 * ep2 + 24 * T * T) * Dd ** 5 / 120) / Math.cos(p1);
-  return [lat * 180 / Math.PI, lon * 180 / Math.PI];
-}
-let mouse = null, pickPending = false;
-renderer.domElement.addEventListener("pointermove", (e) => { mouse = [e.clientX, e.clientY]; pickPending = true; });
-renderer.domElement.addEventListener("pointerleave", () => { mouse = null; $("readout").classList.add("hidden"); });
-function updateReadout() {
-  if (!pickPending) return;
-  pickPending = false;
-  const el = $("readout");
-  const hit = mouse && pick(...mouse);
-  if (!hit) { el.classList.add("hidden"); return; }
-  const { nx, ny, A, B } = cur.L;
-  const i = Math.min(Math.max(Math.round(hit.u * A[0] + B[0]), 0), nx - 1);
-  const j = Math.min(Math.max(Math.round(hit.v * A[1] + B[1]), 0), ny - 1), q = j * nx + i;
-  const E = XMIN + hit.u * (XMAX - XMIN), N = YMAX - hit.v * (YMAX - YMIN), [lat, lon] = utmToLatLon(E, N);
-  const thk = cur.thk[q];
-  el.innerHTML =
-    `<span class="k">${tr("surface")}</span><b>${fmt(heightAt(hit.u, hit.v))} m</b><br>` +
-    `<span class="k">${tr("ice")}</span><b>${thk ? fmt(thk) + " m" : "—"}</b><br>` +
-    `<span class="k">${tr("vel")}</span><b>${thk ? fmt(cur.vel[q]) + " m/a" : "—"}</b><br>` +
-    `<span class="k">${tr("latlon")}</span>${lat.toFixed(3)}°, ${lon.toFixed(3)}°<br>` +
-    `<span class="k">UTM 32N</span>${(E / 1000).toFixed(1)}, ${(N / 1000).toFixed(1)} km`;
-  el.classList.remove("hidden");
-  const x = mouse[0] + 18, y = mouse[1] + 18;
-  el.style.left = `${Math.min(x, innerWidth - el.offsetWidth - 8)}px`;
-  el.style.top = `${Math.min(y, innerHeight - el.offsetHeight - 8)}px`;
+  // stay above the model area
+  const w = world.scale.x, lim = 0.6 * w;
+  rig.position.x = Math.min(Math.max(rig.position.x, world.position.x - lim), world.position.x + lim);
+  rig.position.z = Math.min(Math.max(rig.position.z, world.position.z - lim * D - 0.25 * w), world.position.z + lim * D + 0.25 * w);
 }
 
-// views
-// same order as "views" in i18n.js
-const VIEWS = {
-  overview: { u: 0.5, v: 0.52, dist: 420, az: 0, pol: 0.9 },
-  top: { u: 0.5, v: 0.5, dist: 360, az: 0, pol: 0.001 },
-  rhone: { u: 0.17, v: 0.68, dist: 120, az: 20, pol: 1.0 },
-  valais: { u: 0.36, v: 0.79, dist: 90, az: -50, pol: 1.05 },
-  lausanne: { u: 0.21, v: 0.65, dist: 75, az: -40, pol: 1.05 },
-  aare: { u: 0.38, v: 0.48, dist: 110, az: 170, pol: 1.0 },
-  reuss: { u: 0.53, v: 0.45, dist: 90, az: 160, pol: 1.0 },
-  linth: { u: 0.62, v: 0.33, dist: 120, az: 160, pol: 1.0 },
+// ambience around the model, following the film and its soundtrack: ice age (snowy ridges, snow in the wind),
+// deglaciation (green hills, forests, herds of various animals, flocks of birds), industrial era (towns, people, a
+// steam train, then more and more trains and planes until saturation), and a sky that warms up.
+// Silhouettes far away, drawn before everything else so that they never hide the model.
+const AMB = { R: 90, layers: [], actors: [], snow: null, sky: null, sun: null };
+const smooth = (a, b, x) => { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
+const rnd = (() => { let s = 7; return () => ((s = (s * 16807) % 2147483647) / 2147483647); })();
+const canvas = (w, h, draw) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; draw(cv.getContext("2d"), w, h); return cv; };
+const ctex = (cv) => { const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t; };
+
+// sky dome: colour gradient, from a cold night to a hot, hazy sky at the end
+const skyU = { uTop: { value: new THREE.Color() }, uHor: { value: new THREE.Color() } };
+AMB.sky = new THREE.Mesh(new THREE.SphereGeometry(200, 32, 16), new THREE.ShaderMaterial({
+  uniforms: skyU, side: THREE.BackSide, depthTest: false, depthWrite: false,
+  vertexShader: "varying float vY; void main(){ vY = normalize(position).y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+  fragmentShader: `uniform vec3 uTop, uHor; varying float vY;
+    void main(){ gl_FragColor = vec4(mix(uHor, uTop, pow(clamp(vY, 0.0, 1.0), 0.45)), 1.0);
+    #include <colorspace_fragment>
+    }`,
+}));
+AMB.sky.renderOrder = -20;
+scene.add(AMB.sky);
+const SKY = {
+  ice: [0x0a111c, 0x3b4d63], green: [0x0c1520, 0x2f4a3c], human: [0x110f14, 0x4b382c], hot: [0x5a2410, 0xe0782c],
 };
-let flight = null;
-function flyTo(name) {
-  const vw = VIEWS[name];
-  const tgt = new THREE.Vector3((vw.u - 0.5) * W, heightAt(vw.u, vw.v) * s(), (vw.v - 0.5) * D);
-  const az = (vw.az * Math.PI) / 180;
-  const pos = tgt.clone().add(new THREE.Vector3(Math.sin(vw.pol) * Math.sin(az), Math.cos(vw.pol), Math.sin(vw.pol) * Math.cos(az)).multiplyScalar(vw.dist));
-  flight = { t0: performance.now(), dur: 1600, p0: camera.position.clone(), q0: controls.target.clone(), p1: pos, q1: tgt };
+const cA = new THREE.Color(), cB = new THREE.Color();
+function skyColours(cold, green, human, hot) {
+  for (const [i, u] of [[0, skyU.uTop], [1, skyU.uHor]]) {
+    u.value.set(SKY.green[i]).lerp(cA.set(SKY.ice[i]), cold).lerp(cB.set(SKY.human[i]), human).lerp(cA.set(SKY.hot[i]), hot);
+  }
 }
-function updateFlight(now) {
-  if (!flight) return;
-  let a = Math.min((now - flight.t0) / flight.dur, 1);
-  const e = a < 0.5 ? 4 * a * a * a : 1 - Math.pow(-2 * a + 2, 3) / 2;
-  camera.position.lerpVectors(flight.p0, flight.p1, e);
-  controls.target.lerpVectors(flight.q0, flight.q1, e);
-  if (a >= 1) flight = null;
-}
-const viewBtns = Object.keys(VIEWS).map((name) => {
-  const b = document.createElement("button");
-  b.onclick = () => flyTo(name);
-  $("views").appendChild(b);
-  return b;
-});
-controls.addEventListener("start", () => { flight = null; });
+// ground around the model, coloured like the landscape of the period
+AMB.ground = new THREE.Mesh(new THREE.CircleGeometry(200, 64), new THREE.MeshBasicMaterial({ color: 0x1f2e22, depthTest: false, depthWrite: false }));
+AMB.ground.rotation.x = -Math.PI / 2; AMB.ground.renderOrder = -12;
+scene.add(AMB.ground);
+const GROUND = { ice: 0x66737f, green: 0x1d2b20, human: 0x24201e, hot: 0x4a2f1c };
+AMB.sun = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshBasicMaterial({
+  map: ctex(canvas(256, 256, (g, w) => {
+    const r = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+    r.addColorStop(0, "rgba(255,250,220,1)"); r.addColorStop(0.12, "rgba(255,220,140,1)");
+    r.addColorStop(0.35, "rgba(255,150,60,0.45)"); r.addColorStop(1, "rgba(255,110,40,0)");
+    g.fillStyle = r; g.fillRect(0, 0, w, w);
+  })), transparent: true, opacity: 0, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending }));
+AMB.sun.renderOrder = -15;
+scene.add(AMB.sun);
 
-// UI wiring
-function seg(id, cb) {
-  const el = $(id);
-  el.addEventListener("click", (e) => {
-    const b = e.target.closest("button"); if (!b) return;
-    el.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
-    cb(+b.dataset.v);
+function horizonLayer(draw, rot) {                         // panorama wrapped around a cylinder centred on the user
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(AMB.R, AMB.R, 40, 96, 1, true),
+    new THREE.MeshBasicMaterial({ map: ctex(canvas(4096, 512, draw)), transparent: true, opacity: 0, side: THREE.BackSide,
+      depthTest: false, depthWrite: false }));
+  m.rotation.y = rot; m.renderOrder = -10;
+  scene.add(m); AMB.layers.push(m);
+  return m;
+}
+const ridge = (W, H, base, amp, rough, seed, step = 8) => {
+  const pts = [];
+  for (let x = 0; x <= W; x += step) {
+    let y = 0;
+    for (let k = 1; k <= 7; k++) y += Math.sin((x / W) * Math.PI * 2 * (k * 3 + seed) + seed * k * 1.7) * amp / k ** rough;
+    pts.push([x, H * base - Math.abs(y)]);
+  }
+  return pts;
+};
+const fillProfile = (g, pts, H, style) => {
+  g.beginPath(); g.moveTo(0, H); pts.forEach(([x, y]) => g.lineTo(x, y)); g.lineTo(pts.at(-1)[0], H); g.closePath();
+  g.fillStyle = style; g.fill();
+};
+function tree(g, x, y, s, kind, col) {
+  g.fillStyle = col;
+  if (kind) {                                               // conifer
+    for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(x, y - s * (2.6 - k * 0.55)); g.lineTo(x - s * (0.5 + k * 0.22), y - s * (1.2 - k * 0.45)); g.lineTo(x + s * (0.5 + k * 0.22), y - s * (1.2 - k * 0.45)); g.fill(); }
+    g.fillRect(x - s * 0.08, y - s * 0.4, s * 0.16, s * 0.4);
+  } else {                                                  // broadleaf
+    g.fillRect(x - s * 0.1, y - s * 0.9, s * 0.2, s * 0.9);
+    g.beginPath(); g.arc(x, y - s * 1.4, s * 0.75, 0, 7); g.arc(x - s * 0.5, y - s * 1.1, s * 0.5, 0, 7); g.arc(x + s * 0.5, y - s * 1.1, s * 0.5, 0, 7); g.fill();
+  }
+}
+
+// side-view silhouettes, facing right, standing on the bottom of the canvas; ph = gait phase (0 / 1)
+const INK = "#0b120d";
+function legs(g, xs, top, bot, ph, sw, lw) {
+  g.lineWidth = lw; g.lineCap = "round"; g.strokeStyle = INK;
+  xs.forEach((x, i) => { const d = ((i + ph) % 2 ? 1 : -1) * sw; g.beginPath(); g.moveTo(x, top); g.lineTo(x + d, bot); g.stroke(); });
+}
+const ANIMALS = {
+  deer: { w: 256, h: 192, size: 2.1, speed: 0.045, draw(g, w, h, ph) {
+    g.fillStyle = INK; g.beginPath(); g.ellipse(w * 0.45, h * 0.45, w * 0.24, h * 0.13, 0, 0, 7); g.fill();
+    g.strokeStyle = INK; g.lineWidth = 9; g.beginPath(); g.moveTo(w * 0.64, h * 0.4); g.lineTo(w * 0.77, h * 0.2); g.stroke();
+    g.beginPath(); g.ellipse(w * 0.81, h * 0.19, w * 0.06, h * 0.05, -0.3, 0, 7); g.fill();
+    g.lineWidth = 4; g.beginPath(); g.moveTo(w * 0.79, h * 0.14); g.lineTo(w * 0.73, h * 0.01); g.moveTo(w * 0.75, h * 0.06); g.lineTo(w * 0.68, h * 0.04);
+    g.moveTo(w * 0.81, h * 0.13); g.lineTo(w * 0.86, h * 0.02); g.stroke();
+    legs(g, [w * 0.3, w * 0.36, w * 0.56, w * 0.62], h * 0.52, h * 0.97, ph, w * 0.07, 6); } },
+  horse: { w: 256, h: 192, size: 2.4, speed: 0.05, draw(g, w, h, ph) {
+    g.fillStyle = INK; g.beginPath(); g.ellipse(w * 0.45, h * 0.45, w * 0.27, h * 0.14, 0, 0, 7); g.fill();
+    g.beginPath(); g.moveTo(w * 0.62, h * 0.38); g.lineTo(w * 0.8, h * 0.12); g.lineTo(w * 0.92, h * 0.24); g.lineTo(w * 0.86, h * 0.28); g.lineTo(w * 0.74, h * 0.48); g.fill();
+    g.strokeStyle = INK; g.lineWidth = 7; g.beginPath(); g.moveTo(w * 0.19, h * 0.42); g.quadraticCurveTo(w * 0.08, h * 0.5, w * 0.1, h * 0.7); g.stroke();
+    legs(g, [w * 0.27, w * 0.34, w * 0.56, w * 0.63], h * 0.52, h * 0.98, ph, w * 0.08, 7); } },
+  bison: { w: 256, h: 192, size: 2.5, speed: 0.025, draw(g, w, h, ph) {
+    g.fillStyle = INK; g.beginPath(); g.ellipse(w * 0.42, h * 0.5, w * 0.27, h * 0.17, 0, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(w * 0.6, h * 0.36, w * 0.17, h * 0.2, -0.3, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(w * 0.78, h * 0.56, w * 0.09, h * 0.11, 0.3, 0, 7); g.fill();
+    g.strokeStyle = INK; g.lineWidth = 4; g.beginPath(); g.moveTo(w * 0.8, h * 0.45); g.quadraticCurveTo(w * 0.86, h * 0.36, w * 0.83, h * 0.33); g.stroke();
+    legs(g, [w * 0.25, w * 0.32, w * 0.55, w * 0.62], h * 0.6, h * 0.98, ph, w * 0.04, 9); } },
+  mammoth: { w: 256, h: 220, size: 4.6, speed: 0.012, until: -11000, draw(g, w, h, ph) {
+    g.fillStyle = INK; g.beginPath(); g.ellipse(w * 0.43, h * 0.45, w * 0.29, h * 0.24, 0, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(w * 0.7, h * 0.3, w * 0.13, h * 0.17, 0, 0, 7); g.fill();
+    g.strokeStyle = INK; g.lineWidth = 12; g.lineCap = "round"; g.beginPath(); g.moveTo(w * 0.8, h * 0.35); g.quadraticCurveTo(w * 0.9, h * 0.6, w * 0.84, h * 0.86); g.stroke();
+    g.strokeStyle = "#5b5a52"; g.lineWidth = 6; g.beginPath(); g.moveTo(w * 0.76, h * 0.46); g.quadraticCurveTo(w * 0.98, h * 0.58, w * 0.95, h * 0.36); g.stroke();
+    legs(g, [w * 0.24, w * 0.33, w * 0.53, w * 0.62], h * 0.6, h * 0.99, ph, w * 0.03, 16); } },
+  wolf: { w: 256, h: 128, size: 1.1, speed: 0.07, draw(g, w, h, ph) {
+    g.fillStyle = INK; g.beginPath(); g.ellipse(w * 0.45, h * 0.45, w * 0.24, h * 0.14, 0, 0, 7); g.fill();
+    g.beginPath(); g.moveTo(w * 0.64, h * 0.4); g.lineTo(w * 0.86, h * 0.36); g.lineTo(w * 0.9, h * 0.44); g.lineTo(w * 0.7, h * 0.56); g.fill();
+    g.beginPath(); g.moveTo(w * 0.74, h * 0.37); g.lineTo(w * 0.77, h * 0.18); g.lineTo(w * 0.8, h * 0.37); g.fill();
+    g.strokeStyle = INK; g.lineWidth = 9; g.beginPath(); g.moveTo(w * 0.22, h * 0.42); g.quadraticCurveTo(w * 0.1, h * 0.5, w * 0.06, h * 0.62); g.stroke();
+    legs(g, [w * 0.3, w * 0.36, w * 0.56, w * 0.62], h * 0.55, h * 0.98, ph, w * 0.07, 7); } },
+  ibex: { w: 192, h: 192, size: 1.6, speed: 0.03, draw(g, w, h, ph) {
+    g.fillStyle = INK; g.beginPath(); g.ellipse(w * 0.45, h * 0.5, w * 0.25, h * 0.13, 0, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(w * 0.76, h * 0.34, w * 0.08, h * 0.06, -0.4, 0, 7); g.fill();
+    g.strokeStyle = INK; g.lineWidth = 10; g.beginPath(); g.moveTo(w * 0.64, h * 0.46); g.lineTo(w * 0.73, h * 0.36); g.stroke();
+    g.lineWidth = 7; g.beginPath(); g.moveTo(w * 0.74, h * 0.3); g.quadraticCurveTo(w * 0.62, h * 0.0, w * 0.5, h * 0.18); g.stroke();
+    legs(g, [w * 0.3, w * 0.36, w * 0.56, w * 0.62], h * 0.57, h * 0.98, ph, w * 0.05, 6); } },
+  hare: { w: 128, h: 96, size: 0.45, speed: 0.09, draw(g, w, h, ph) {
+    g.fillStyle = INK; g.beginPath(); g.ellipse(w * 0.45, h * 0.6, w * 0.25, h * 0.2, ph ? -0.2 : 0.1, 0, 7); g.fill();
+    g.beginPath(); g.arc(w * 0.72, h * 0.45, w * 0.1, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(w * 0.72, h * 0.15, w * 0.04, h * 0.2, 0.3, 0, 7); g.fill();
+    legs(g, [w * 0.35, w * 0.6], h * 0.7, h * 0.99, ph, w * 0.1, 6); } },
+};
+function bird(g, w, h, ph) {
+  g.strokeStyle = INK; g.lineWidth = 6; g.lineCap = "round"; g.beginPath();
+  const y = ph ? h * 0.2 : h * 0.8;
+  g.moveTo(w * 0.05, y); g.quadraticCurveTo(w * 0.3, h * 0.45, w * 0.5, h * 0.55); g.quadraticCurveTo(w * 0.7, h * 0.45, w * 0.95, y); g.stroke();
+}
+
+function actor(frames, height, opts) {                      // a sprite that walks / flies around the user
+  const texs = frames.map(ctex), cv = frames[0];
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(height * cv.width / cv.height, height),
+    new THREE.MeshBasicMaterial({ map: texs[0], transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
+  m.renderOrder = -5; m.visible = false;
+  m.userData = { texs, f: 0, h: height, ...opts };
+  scene.add(m); AMB.actors.push(m);
+  return m;
+}
+function steamTrain(puff) {
+  return canvas(1024, 192, (g, w, h) => {
+    g.fillStyle = "rgba(170,170,170,0.5)";
+    for (let k = 0; k < 7; k++) { g.beginPath(); g.arc(60 + k * 55 + (puff ? 20 : 0), 40 - k * 3 + (puff ? 6 : 0), 18 + k * 5, 0, 7); g.fill(); }
+    g.fillStyle = "#121216";
+    g.fillRect(20, 95, 140, 70); g.fillRect(40, 60, 24, 38); g.fillRect(115, 70, 45, 30); g.fillRect(165, 105, 70, 60);
+    for (let k = 0; k < 4; k++) g.fillRect(245 + k * 150, 90, 140, 75);
+    g.fillStyle = "rgba(255,200,110,0.55)"; for (let k = 0; k < 4; k++) for (let j = 0; j < 5; j++) g.fillRect(260 + k * 150 + j * 25, 105, 13, 16);
+    g.fillStyle = "#121216"; for (let k = 0; k < 16; k++) { g.beginPath(); g.arc(40 + k * 50, 170, 14, 0, 7); g.fill(); }
   });
 }
-seg("mode", (v) => {
-  state.mode = uniforms.uMode.value = v;
-  $("opacityRow").hidden = v === 0;
-  $("legend").classList.toggle("hidden", v === 0);
-  if (v) {
-    $("legendBar").style.background = `linear-gradient(90deg, ${ramps[v].join(",")})`;
-    $("legendTicks").innerHTML = v === 1 ? "<span>0</span><span>500</span><span>1000</span><span>1500</span><span>2000 m</span>"
-      : "<span>1</span><span>10</span><span>100</span><span>1000 m/a</span>";
-  }
+const modernTrain = () => canvas(1024, 128, (g, w, h) => {
+  g.fillStyle = "#16171c";
+  g.beginPath(); g.moveTo(980, 110); g.quadraticCurveTo(1020, 105, 1000, 60); g.quadraticCurveTo(960, 25, 880, 25); g.lineTo(10, 25); g.lineTo(10, 110); g.fill();
+  g.fillStyle = "rgba(200,225,255,0.6)"; for (let x = 30; x < 870; x += 30) g.fillRect(x, 45, 20, 18);
+  g.fillStyle = "rgba(255,90,60,0.7)"; g.fillRect(10, 85, 980, 6);
 });
-let savedMesh = null;
-try { savedMesh = localStorage.getItem("alps3d.mesh"); } catch {}
-state.mesh = 0;   // 250 m by default
-if (!LEVELS[2]) $("meshRes").querySelector('[data-v="2"]').remove();
-function setMesh(v) {
-  state.mesh = v;
-  $("meshRes").querySelectorAll("button").forEach((x) => x.classList.toggle("on", +x.dataset.v === v));
-  terrain.geometry.dispose();
-  terrain.geometry = buildGeometry(LEVELS[v]);
-  try { localStorage.setItem("alps3d.mesh", v); } catch {}
-  if (shown && shown.level !== 1 && shown.level !== hqLevel()) frame(1, state.k).then((f) => { if (want === state.k) apply(f); show(state.k); });
-  else show(state.k);
+const plane = () => canvas(512, 128, (g, w, h) => {
+  const tr = g.createLinearGradient(0, 0, w * 0.6, 0); tr.addColorStop(0, "rgba(220,220,220,0)"); tr.addColorStop(1, "rgba(220,220,220,0.45)");
+  g.fillStyle = tr; g.fillRect(0, 58, w * 0.62, 6);
+  g.fillStyle = "#15161a"; g.beginPath(); g.ellipse(w * 0.8, h * 0.5, w * 0.17, h * 0.08, 0, 0, 7); g.fill();
+  g.beginPath(); g.moveTo(w * 0.78, h * 0.5); g.lineTo(w * 0.72, h * 0.9); g.lineTo(w * 0.84, h * 0.5); g.fill();
+  g.beginPath(); g.moveTo(w * 0.66, h * 0.48); g.lineTo(w * 0.63, h * 0.2); g.lineTo(w * 0.7, h * 0.48); g.fill();
+});
+const person = (ph) => canvas(64, 160, (g, w, h) => {
+  g.fillStyle = "#121216"; g.beginPath(); g.arc(w / 2, h * 0.12, w * 0.16, 0, 7); g.fill();
+  g.fillRect(w * 0.36, h * 0.22, w * 0.28, h * 0.4);
+  g.strokeStyle = "#121216"; g.lineWidth = 7; g.lineCap = "round"; const d = ph ? 0.18 : 0.05;
+  g.beginPath(); g.moveTo(w * 0.45, h * 0.6); g.lineTo(w * (0.5 - d), h); g.moveTo(w * 0.55, h * 0.6); g.lineTo(w * (0.5 + d), h); g.stroke();
+});
+
+function buildAmbience() {
+  AMB.ice = horizonLayer((g, W, H) => {
+    const sky = g.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, "rgba(120,140,165,0)"); sky.addColorStop(0.7, "rgba(120,140,165,0.25)");
+    g.fillStyle = sky; g.fillRect(0, 0, W, H);
+    fillProfile(g, ridge(W, H, 0.74, 95, 0.75, 1.3, 4), H, "#5d6b7a");
+    const snow = g.createLinearGradient(0, H * 0.45, 0, H); snow.addColorStop(0, "#d3dde7"); snow.addColorStop(1, "#7d8b99");
+    fillProfile(g, ridge(W, H, 0.84, 60, 0.9, 2.7, 4), H, snow);
+  }, 0);
+  AMB.hills = horizonLayer((g, W, H) => {
+    fillProfile(g, ridge(W, H, 0.78, 45, 1.2, 0.6), H, "#2c4433");
+    for (let x = 0; x < W; x += 6 + rnd() * 10) tree(g, x, H * 0.78 - 8 - rnd() * 22, 5 + rnd() * 6, rnd() < 0.6, "#1f3326");
+    fillProfile(g, ridge(W, H, 0.88, 18, 1.8, 4.1), H, "#203124");
+    for (let x = 0; x < W; x += 14 + rnd() * 40) tree(g, x, H * 0.88 - rnd() * 8, 9 + rnd() * 14, rnd() < 0.5, "#16241a");
+  }, 0.7);
+  AMB.town = horizonLayer((g, W, H) => {
+    const haze = g.createLinearGradient(0, H * 0.4, 0, H); haze.addColorStop(0, "rgba(150,110,80,0)"); haze.addColorStop(1, "rgba(150,110,80,0.3)");
+    g.fillStyle = haze; g.fillRect(0, 0, W, H);
+    for (let x = 0; x < W;) {
+      const bw = 14 + rnd() * 34, bh = (20 + rnd() * 110) * (((x / W * 7) % 1) < 0.55 ? 1 : 0.3);
+      g.fillStyle = "#17161a"; g.fillRect(x, H * 0.88 - bh, bw, bh + H * 0.12);
+      g.fillStyle = "rgba(255,200,110,0.55)";
+      for (let wy = H * 0.88 - bh + 6; wy < H * 0.86; wy += 9) for (let wx = x + 3; wx < x + bw - 3; wx += 6) if (rnd() < 0.25) g.fillRect(wx, wy, 2, 3);
+      if (rnd() < 0.08) { g.fillStyle = "#17161a"; g.fillRect(x + bw / 2, H * 0.88 - bh - 45, 6, 45); }
+      x += bw + rnd() * 8;
+    }
+  }, 1.9);
+
+  // herds: several species and sizes, at various distances and speeds
+  const herd = ["deer", "deer", "deer", "horse", "horse", "horse", "bison", "bison", "bison", "bison", "mammoth", "mammoth", "mammoth",
+    "wolf", "wolf", "wolf", "ibex", "ibex", "hare", "hare", "hare"];
+  herd.forEach((sp, i) => {
+    const A = ANIMALS[sp], frames = [0, 1].map((ph) => canvas(A.w, A.h, (g, w, h) => A.draw(g, w, h, ph)));
+    const dir = i % 4 === 0 ? -1 : 1, r = AMB.R - 3 - rnd() * 14;
+    actor(frames, A.size * (0.8 + rnd() * 0.4), { kind: "green", a: rnd() * 6.28, w: dir * A.speed * (0.7 + rnd() * 0.6) * 80 / r,
+      y: 0, r, flip: -dir, gait: sp === "mammoth" || sp === "bison" ? 420 : 170, until: A.until });
+  });
+  // flocks of birds
+  for (let f = 0; f < 4; f++) {
+    const a0 = rnd() * 6.28, y0 = 14 + rnd() * 20, dir = f % 2 ? 1 : -1;
+    for (let i = 0; i < 6 + f * 2; i++) {
+      const frames = [0, 1].map((ph) => canvas(128, 64, (g, w, h) => bird(g, w, h, ph)));
+      actor(frames, 0.5 + rnd() * 0.3, { kind: "green", a: a0 + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.012, w: dir * 0.06,
+        y: y0 + Math.ceil(i / 2) * 0.8 * (rnd() * 0.4 + 0.8), r: AMB.R - 10, flip: -dir, gait: 220, fly: true });
+    }
+  }
+  // people: more and more
+  for (let i = 0; i < 40; i++) {
+    const frames = [0, 1].map(person), dir = rnd() < 0.5 ? -1 : 1;
+    actor(frames, 1.7, { kind: "human", rank: i / 40, a: rnd() * 6.28, w: dir * 0.012, y: 0, r: AMB.R - 4 - rnd() * 8, gait: 300 });
+  }
+  // trains: a steam train first, then more and more, faster and modern
+  const steam = [0, 1].map(steamTrain), modern = [modernTrain()];
+  for (let i = 0; i < 24; i++) {
+    const dir = i % 2 ? -1 : 1;
+    actor(i < 3 ? steam : modern, i < 3 ? 2.6 : 1.8, { kind: "human", rank: i < 3 ? i * 0.04 : 0.08 + (i / 24) * 0.92,
+      a: rnd() * 6.28, w: dir * (i < 3 ? 0.035 : 0.06 + rnd() * 0.05), y: 0, r: AMB.R - 2 - (i % 6) * 1.6, flip: -dir, gait: 600,
+      steam: i < 3, speedUp: true });
+  }
+  // planes from the mid-20th century
+  for (let i = 0; i < 14; i++) {
+    const dir = i % 2 ? -1 : 1;
+    actor([plane()], 1.6, { kind: "human", rank: 0.35 + (i / 14) * 0.65, a: rnd() * 6.28, w: dir * (0.08 + rnd() * 0.05), y: 16 + rnd() * 24,
+      r: AMB.R - 8, flip: -dir, fly: true, speedUp: true });
+  }
+  // snow in the wind (ice age), around the user
+  const n = 2500, p = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++) { p[3 * i] = (Math.random() - 0.5) * 60; p[3 * i + 1] = Math.random() * 20; p[3 * i + 2] = (Math.random() - 0.5) * 60; }
+  const sg = new THREE.BufferGeometry(); sg.setAttribute("position", new THREE.BufferAttribute(p, 3));
+  AMB.snow = new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xe8f0ff, size: 0.05, transparent: true, opacity: 0, depthWrite: false }));
+  scene.add(AMB.snow);
 }
-seg("meshRes", setMesh);
-$("opacity").oninput = (e) => (uniforms.uOpacity.value = +e.target.value);
-$("shade").oninput = (e) => (uniforms.uShade.value = +e.target.value);
-$("sunaz").oninput = setSun;
-function setSun() {
-  const az = (+$("sunaz").value * Math.PI) / 180, alt = (40 * Math.PI) / 180;
-  uniforms.uSun.value.set(Math.sin(az) * Math.cos(alt), Math.sin(alt), -Math.cos(az) * Math.cos(alt));
+
+const camPos = new THREE.Vector3();
+function updateAmbience(year, dt, now) {
+  const cold = 1 - smooth(-16000, -11500, year), human = smooth(1850, 1950, year), green = (1 - cold) * (1 - human);
+  const hot = smooth(1960, 2100, year), busy = smooth(1880, 2100, year);   // how far into the industrial era
+  camera.getWorldPosition(camPos);
+  AMB.sky.position.copy(camPos);
+  skyColours(cold, green, human, hot);
+  AMB.ground.position.set(camPos.x, 0, camPos.z);
+  AMB.ground.material.color.set(GROUND.green).lerp(cA.set(GROUND.ice), cold).lerp(cB.set(GROUND.human), human).lerp(cA.set(GROUND.hot), hot);
+  const ground = 0;
+  for (const m of AMB.layers) m.position.set(camPos.x, ground + 14, camPos.z);
+  AMB.ice.material.opacity = 0.6 * cold; AMB.hills.material.opacity = 0.75 * green; AMB.town.material.opacity = 0.7 * human;
+  // the sun grows and warms the sky at the end
+  AMB.sun.material.opacity = hot;
+  AMB.sun.position.set(camPos.x - 120, 25 + 10 * hot, camPos.z - 140);
+  AMB.sun.lookAt(camPos); AMB.sun.scale.setScalar(0.6 + 0.8 * hot);
+
+  for (const m of AMB.actors) {
+    const u = m.userData;
+    let op = u.kind === "green" ? 0.8 * green : (busy >= u.rank ? 0.75 * human : 0);
+    if (u.until !== undefined && year > u.until) op *= 1 - smooth(u.until, u.until + 1500, year);
+    if (u.steam) op *= 1 - smooth(1930, 1970, year);     // steam trains disappear
+    m.visible = op > 0.01;
+    if (!m.visible) continue;
+    u.a += u.w * dt * (u.speedUp ? 1 + 2.5 * busy : 1);
+    const bob = u.fly ? 0.3 * Math.sin(now / 700 + u.a * 30) : 0;
+    m.position.set(camPos.x + Math.sin(u.a) * u.r, ground + u.y + bob + u.h / 2, camPos.z + Math.cos(u.a) * u.r);
+    m.lookAt(camPos.x, m.position.y, camPos.z);
+    m.scale.x = u.flip || 1;
+    m.material.opacity = op;
+    if (u.texs.length > 1) {                              // gait / wing beat / smoke: alternate two drawings
+      const f = Math.floor(now / u.gait + u.a * 10) % 2;
+      if (f !== u.f) { u.f = f; m.material.map = u.texs[f]; }
+    }
+  }
+  // snow drifting in the wind
+  AMB.snow.material.opacity = 0.75 * cold;
+  AMB.snow.visible = cold > 0.02;
+  if (AMB.snow.visible) {
+    const a = AMB.snow.geometry.attributes.position.array;
+    for (let i = 0; i < a.length; i += 3) {
+      a[i] += (2.5 + Math.sin(now / 900 + i) * 0.8) * dt; a[i + 1] -= 0.9 * dt; a[i + 2] += 0.6 * dt;
+      if (a[i + 1] < 0) a[i + 1] += 20;
+      if (a[i] > 30) a[i] -= 60;
+      if (a[i + 2] > 30) a[i + 2] -= 60;
+    }
+    AMB.snow.geometry.attributes.position.needsUpdate = true;
+    AMB.snow.position.set(camPos.x, Math.max(0, camPos.y - 10), camPos.z);
+  }
 }
-setSun();
-$("exag").oninput = (e) => {
-  const old = state.exag;
-  state.exag = uniforms.uExag.value = +e.target.value;
-  $("exagOut").textContent = state.exag.toFixed(1) + "×";
-  controls.target.y *= state.exag / old;
-  updateBorder();
-};
-$("showBorder").onchange = (e) => (border.visible = e.target.checked);
-// playback speed
-const YEARS_PER_SECOND = 200;
-const DT = Math.max(1, Math.round((times[NF - 1] - times[0]) / Math.max(1, NF - 1)));
-state.fps = YEARS_PER_SECOND / DT;
-$("play").onclick = () => setPlaying(!state.playing);
-$("prev").onclick = () => { setPlaying(false); show(state.k - 1); };
-$("next").onclick = () => { setPlaying(false); show(state.k + 1); };
-$("panelToggle").onclick = () => $("panel").classList.toggle("collapsed");
-addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
-  const n = e.shiftKey ? 10 : 1;
-  if (e.code === "Space") { e.preventDefault(); setPlaying(!state.playing); }
-  else if (e.key === "ArrowRight") { setPlaying(false); show(state.k + n); }
-  else if (e.key === "ArrowLeft") { setPlaying(false); show(state.k - n); }
-  else if (e.key === "h" || e.key === "H") document.body.classList.toggle("noui");
+buildAmbience();
+
+let lastNow = 0;
+renderer.setAnimationLoop((now, frame) => {
+  const dt = lastNow ? Math.min((now - lastNow) / 1000, 0.1) : 0;
+  lastNow = now;
+  updateRelief();
+  updateAmbience(yearNow(), dt, now);
+  if (frame) {
+    xrUpdate(now, frame);
+    const key = `${Math.floor(video.currentTime * 4)}${video.paused}`;
+    if (key !== lastKey) { lastKey = key; drawPanel(); }
+  } else controls.update();
+  renderer.render(scene, camera);
 });
 addEventListener("resize", () => {
   renderer.setSize(innerWidth, innerHeight);
@@ -707,344 +700,13 @@ addEventListener("resize", () => {
   camera.updateProjectionMatrix();
 });
 
-// language
-function relabel() {
-  viewBtns.forEach((b, i) => (b.textContent = tr("views")[i]));
-  meta.cities.forEach((c, i) => (cityEls[i].textContent = tr("cityNames")[c.name] ?? c.name));
-  updateInfo(state.k);
-  pickPending = true;
-}
-onLangChange(relabel);
-$("lang").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setLang(b.dataset.v); });
-setLang(lang);
+// 2D preview (computer): the model seen from above; double click to play / pause
+world.scale.setScalar(WIDTH);
+renderer.domElement.addEventListener("dblclick", () => { if (video.src) video.paused ? video.play() : video.pause(); });
 
-// VR / mixed reality (Meta Quest; enabled by config.js: vr: true)
-// "table": the Alps as a ~1.4 m model in the room (passthrough); "fly": landscape scale, flying with the sticks.
-// Kept simple: 250 m mesh, border and cities always on.
-// Left stick: move (fly: forward/back where you look, turn; table: rotate/zoom). Right stick left/right: time.
-// Right trigger: play/pause. A or X: next layer. B or Y: reset the view. Grip: move faster.
-const XR = { rig: new THREE.Group(), mode: null, saved: null, prev: {}, scrub: 0, snap: true, labels: new THREE.Group(), helpAt: 0 };
-scene.add(XR.rig);
-XR.rig.add(camera);
-if (window.ALPS3D_CONFIG?.vr) setupXR();
-
-function setupXR() {
-  renderer.xr.enabled = true;
-  renderer.xr.setReferenceSpaceType("local-floor");
-  const box = document.createElement("div");
-  box.id = "xrButtons";
-  box.innerHTML = `<button data-m="table">Table · mixed reality</button><button data-m="fly">Fly · VR</button>
-    <p id="xrInfo">Open this page in the Meta Quest browser.</p>`;
-  document.body.appendChild(box);
-  const check = async (type) => !!(navigator.xr && await navigator.xr.isSessionSupported(type).catch(() => false));
-  Promise.all([check("immersive-ar"), check("immersive-vr")]).then(([ar, vr]) => {
-    box.querySelector('[data-m="table"]').disabled = !(ar || vr);
-    box.querySelector('[data-m="fly"]').disabled = !vr;
-    if (ar || vr) $("xrInfo").innerHTML = "Left stick: move · Right stick ←→: time · Right trigger: play/pause<br>"
-      + "A or X: layer (texture, ice thickness, speed) · B or Y: reset view · Grip: faster";
-  });
-  box.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) startXR(b.dataset.m); });
-
-  for (const i of [0, 1]) {
-    const c = renderer.xr.getController(i);
-    c.add(new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 0.08), new THREE.MeshBasicMaterial({ color: 0xff7738 })));
-    c.addEventListener("connected", (e) => { c.userData.hand = e.data.handedness; if (e.data.handedness === "left") c.add(XR.panel); });
-    XR.rig.add(c);
-  }
-  // wrist panel: film timeline + status
-  const cv = document.createElement("canvas");
-  cv.width = 1024; cv.height = 400;
-  XR.ctx = cv.getContext("2d");
-  XR.tex = new THREE.CanvasTexture(cv);
-  XR.tex.colorSpace = THREE.SRGBColorSpace;
-  XR.panel = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.086), new THREE.MeshBasicMaterial({ map: XR.tex, transparent: true }));
-  XR.panel.position.set(0, 0.07, -0.06);
-  XR.panel.rotation.x = -0.9;
-  $("timeline").addEventListener("load", drawPanel);
-  XR.labels.visible = false;
-  world.add(XR.labels);
-  const hc = document.createElement("canvas");
-  hc.width = 1400; hc.height = 900;
-  XR.hctx = hc.getContext("2d");
-  XR.htex = new THREE.CanvasTexture(hc);
-  XR.htex.colorSpace = THREE.SRGBColorSpace;
-  XR.help = new THREE.Mesh(new THREE.PlaneGeometry(0.98, 0.63), new THREE.MeshBasicMaterial({ map: XR.htex, transparent: true, depthTest: false }));
-  XR.help.renderOrder = 20;
-  XR.help.visible = false;
-  XR.rig.add(XR.help);
-}
-
-const HELP = {
-  en: ["Controls", "Move in space", "Move in time", "Change the map",
-    { fly: "Left stick: push forward to fly where you look, left / right to turn", table: "Left stick: left / right to rotate, up / down to zoom" },
-    "Right stick left / right: backward / forward in time", "Right trigger: play / pause",
-    "A or X: satellite view → ice thickness → ice speed", "B or Y: reset the view and show this help · Grip: faster",
-    "Press any button to start"],
-  fr: ["Commandes", "Se déplacer dans l’espace", "Se déplacer dans le temps", "Changer de carte",
-    { fly: "Stick gauche : pousser en avant pour voler où vous regardez, gauche / droite pour tourner", table: "Stick gauche : gauche / droite pour tourner, haut / bas pour zoomer" },
-    "Stick droit gauche / droite : reculer / avancer dans le temps", "Gâchette droite : lecture / pause",
-    "A ou X : vue satellite → épaisseur de glace → vitesse de la glace", "B ou Y : réinitialiser la vue et revoir cette aide · Grip : plus vite",
-    "Appuyez sur un bouton pour commencer"],
-  de: ["Bedienung", "Im Raum bewegen", "In der Zeit bewegen", "Karte wechseln",
-    { fly: "Linker Stick: nach vorne drücken, um in Blickrichtung zu fliegen, links / rechts zum Drehen", table: "Linker Stick: links / rechts drehen, oben / unten zoomen" },
-    "Rechter Stick links / rechts: zurück / vorwärts in der Zeit", "Rechter Trigger: Wiedergabe / Pause",
-    "A oder X: Satellitenbild → Eisdicke → Eisgeschwindigkeit", "B oder Y: Ansicht zurücksetzen und diese Hilfe zeigen · Grip: schneller",
-    "Beliebige Taste drücken, um zu starten"],
-};
-
-function showHelp() {                                      // controls card in front of the viewer
-  const t = HELP[document.documentElement.lang] || HELP.en, g = XR.hctx;
-  g.clearRect(0, 0, 1400, 900);
-  g.fillStyle = "rgba(10,14,20,0.9)"; g.beginPath(); g.roundRect(0, 0, 1400, 900, 40); g.fill();
-  g.fillStyle = "#ff7738"; g.font = "bold 72px sans-serif"; g.fillText(t[0], 60, 110);
-  const rows = [[t[1], [t[4][XR.mode]]], [t[2], [t[5], t[6]]], [t[3], [t[7]]]];
-  let y = 210;
-  rows.forEach(([h, lines], i) => {
-    g.fillStyle = "#ff7738"; g.font = "bold 50px sans-serif"; g.fillText(`${i + 1}. ${h}`, 60, y); y += 66;
-    g.fillStyle = "#fff"; g.font = "40px sans-serif";
-    for (const l of lines) { g.fillText(l, 100, y, 1260); y += 56; }
-    y += 30;
-  });
-  g.fillStyle = "#9fb0c2"; g.font = "36px sans-serif"; g.fillText(t[8], 60, y, 1280);
-  g.fillStyle = "#fff"; g.font = "bold 44px sans-serif"; g.textAlign = "center"; g.fillText(t[9], 700, 860); g.textAlign = "left";
-  XR.htex.needsUpdate = true;
-  const head = new THREE.Vector3(), dir = new THREE.Vector3();
-  camera.getWorldPosition(head); camera.getWorldDirection(dir);
-  XR.rig.worldToLocal(head);
-  dir.y = 0; dir.normalize();
-  const yaw = Math.atan2(dir.x, dir.z) - XR.rig.rotation.y;
-  if (!head.y) head.y = 1.6;                               // no pose yet
-  XR.help.position.set(head.x + Math.sin(yaw) * 1.1, head.y - 0.1, head.z + Math.cos(yaw) * 1.1);
-  XR.help.rotation.set(0, yaw + Math.PI, 0);
-  XR.help.visible = true;
-  XR.helpAt = performance.now();
-}
-
-function makeCityLabels() {                               // 3D place names (the HTML labels are not shown in XR)
-  XR.labels.clear();
-  const cfg = window.ALPS3D_CONFIG || {};
-  const places = [
-    ...meta.cities.map((c) => ({ name: tr("cityNames")[c.name] ?? c.name, u: c.u, v: c.v, size: 0.04, kind: "city" })),
-    ...(cfg.towns || []).map(([name, u, v]) => ({ name, u, v, size: 0.028, kind: "town" })),
-    ...(cfg.peaks || []).map(([name, u, v]) => ({ name: "▲ " + name, u, v, size: 0.026, kind: "peak" })),
-  ];
-  for (const c of places) {
-    const cv = document.createElement("canvas"), g = cv.getContext("2d"), font = `${c.kind === "city" ? "bold " : ""}44px sans-serif`;
-    g.font = font;
-    cv.width = Math.ceil(g.measureText(c.name).width) + 24; cv.height = 84;
-    g.font = font; g.textAlign = "center";
-    g.lineWidth = 8; g.strokeStyle = "rgba(0,0,0,0.85)"; g.strokeText(c.name, cv.width / 2, 46);
-    g.fillStyle = c.kind === "peak" ? "#cfe6ff" : "#fff"; g.fillText(c.name, cv.width / 2, 46);
-    if (c.kind !== "peak") {                               // dot marking the place, at the bottom of the label
-      g.beginPath(); g.arc(cv.width / 2, 72, 9, 0, 2 * Math.PI);
-      g.fillStyle = "#ff7738"; g.fill(); g.lineWidth = 3; g.strokeStyle = "#000"; g.stroke();
-    }
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false, fog: false }));
-    sp.center.set(0.5, c.kind === "peak" ? 0.3 : 12 / 84);
-    sp.userData = { c, w: c.size * cv.width / cv.height * 84 / 64, h: c.size * 84 / 64 };
-    sp.renderOrder = c.kind === "city" ? 12 : 10;
-    XR.labels.add(sp);
-  }
-}
-
-function placeCityLabels() {
-  for (const sp of XR.labels.children) {
-    const c = sp.userData.c;
-    sp.position.set((c.u - 0.5) * W, heightAt(c.u, c.v) * s() + 0.02 * state.exag, (c.v - 0.5) * D);
-    sp.scale.set(sp.userData.w / world.scale.x, sp.userData.h / world.scale.x, 1);   // constant on-screen size
-  }
-}
-
-function drawPanel() {
-  if (!XR.ctx) return;
-  const g = XR.ctx, img = $("timeline");
-  g.fillStyle = "rgba(0,0,0,0.85)"; g.fillRect(0, 0, 1024, 400);
-  if (img.complete && img.naturalWidth) g.drawImage(img, 0, 0, 1024, 273);
-  const t = times[state.k], layer = [tr("texture"), tr("thickness"), tr("speed")][state.mode];
-  g.fillStyle = "#ff7738"; g.font = "bold 40px sans-serif";
-  g.fillText(`${t < 0 ? "−" : ""}${fmt(Math.abs(t))}   ${state.playing ? "▶" : "❚❚"}   ${layer}`, 20, 325);
-  g.fillStyle = "#9fb0c2"; g.font = "26px sans-serif";
-  g.fillText("Left stick: move · Right stick ↔: time · Right trigger: play", 20, 362);
-  g.fillText("A / X: layer · B / Y: reset view · Grip: faster", 20, 393);
-  XR.tex.needsUpdate = true;
-}
-
-async function startXR(mode) {
-  const type = mode === "table" && await navigator.xr.isSessionSupported("immersive-ar") ? "immersive-ar" : "immersive-vr";
-  const session = await navigator.xr.requestSession(type, { optionalFeatures: ["local-floor", "bounded-floor"] });
-  XR.saved = { exag: state.exag, mesh: state.mesh, cam: camera.position.clone(), near: camera.near, far: camera.far,
-    border: border.visible };
-  XR.mode = mode;
-  state.xr = true;
-  controls.enabled = false;
-  document.body.classList.add("noui");
-  camera.position.set(0, 0, 0);
-  session.addEventListener("end", endXR);
-  await renderer.xr.setSession(session);
-  renderer.xr.setFoveation?.(1);
-  setXRMesh(0);
-  border.visible = true;
-  makeCityLabels();
-  XR.labels.visible = true;
-  resetXRView();
-  show(state.k);
-  drawPanel();
-  XR.helpPending = true;
-}
-
-function setExag(v) {
-  state.exag = uniforms.uExag.value = v;
-  updateBorder();
-}
-
-function setXRMesh(m) {
-  if (!LEVELS[m]) return;
-  state.mesh = m;
-  terrain.geometry.dispose();
-  terrain.geometry = buildGeometry(LEVELS[m]);
-  drawPanel();
-}
-
-function resetXRView() {
-  world.rotation.set(0, 0, 0);
-  XR.rig.rotation.set(0, 0, 0);
-  if (XR.mode === "table") {
-    setExag(2);
-    world.scale.setScalar(1.4 / W);                       // 392 km -> 1.4 m
-    world.position.set(0, 0.85, -0.9);
-    XR.rig.position.set(0, 0, 0);
-    camera.near = 0.02; camera.far = 50;
-    scene.fog.near = 1e8; scene.fog.far = 1e9;
-  } else {
-    setExag(2);
-    world.scale.setScalar(1000);                          // 1 km -> 1000 m: landscape scale
-    world.position.set(0, 0, 0);
-    const u = 0.21, v = 0.66;                             // south of Lausanne, looking north over the lake
-    XR.rig.position.set((u - 0.5) * W * 1000, heightAt(u, v) * state.exag + 2500, (v - 0.5 + 0.08) * D * 1000);
-    camera.near = 0.2; camera.far = 700000;               // near enough for the wrist panel and the help card
-    scene.fog.near = 80000; scene.fog.far = 450000;
-  }
-}
-
-function endXR() {
-  state.xr = false;
-  XR.mode = null;
-  world.scale.setScalar(1); world.position.set(0, 0, 0); world.rotation.set(0, 0, 0);
-  XR.rig.position.set(0, 0, 0); XR.rig.rotation.set(0, 0, 0);
-  camera.near = XR.saved.near; camera.far = XR.saved.far; camera.position.copy(XR.saved.cam);
-  camera.updateProjectionMatrix();
-  setExag(XR.saved.exag);
-  setXRMesh(XR.saved.mesh);
-  border.visible = XR.saved.border;
-  XR.labels.visible = false;
-  XR.help.visible = false;
-  controls.enabled = true;
-  document.body.classList.remove("noui");
-  show(state.k);
-}
-
-function pressed(hand, gp, i) {                           // true once per button press
-  const key = hand + i, now = !!gp.buttons[i]?.pressed, was = XR.prev[key];
-  XR.prev[key] = now;
-  return now && !was;
-}
-
-function groundAt(x, z) {                                 // fly mode: terrain height (m) under a rig position
-  return heightAt(x / 1000 / W + 0.5, z / 1000 / D + 0.5) * state.exag;
-}
-
-function xrUpdate(now, xrFrame) {
-  const dt = XR.last ? Math.min((now - XR.last) / 1000, 0.1) : 0;
-  XR.last = now;
-  let redraw = false;
-  if (XR.helpPending && xrFrame.getViewerPose(renderer.xr.getReferenceSpace())) { XR.helpPending = false; showHelp(); }
-  if (XR.help.visible) {                                   // the card stays until a button or stick is used
-    let any = false;
-    for (const src of xrFrame.session.inputSources) {
-      const gp = src.gamepad;
-      if (!gp) continue;
-      gp.buttons.forEach((b, i) => { if (b.pressed && !XR.prev[src.handedness + i]) any = true; XR.prev[src.handedness + i] = b.pressed; });
-      if (gp.axes.some((a) => Math.abs(a) > 0.5)) any = true;
-    }
-    if (any && now - XR.helpAt > 800) XR.help.visible = false;
-    return;
-  }
-  for (const src of xrFrame.session.inputSources) {
-    const gp = src.gamepad, hand = src.handedness;
-    if (!gp) continue;
-    const [x, y] = gp.axes.length >= 4 ? [gp.axes[2], gp.axes[3]] : [gp.axes[0] || 0, gp.axes[1] || 0];
-    const sx = Math.abs(x) > 0.15 ? x : 0, sy = Math.abs(y) > 0.15 ? y : 0;
-    const boost = gp.buttons[1]?.pressed ? 5 : 1;
-    if (pressed(hand, gp, 4)) { state.mode = uniforms.uMode.value = (state.mode + 1) % 3; redraw = true; }
-    if (pressed(hand, gp, 5)) { resetXRView(); showHelp(); }
-    if (hand === "right") {
-      if (pressed(hand, gp, 0)) { setPlaying(!state.playing); redraw = true; }
-      if (sx) {                                            // scrub time: up to ~12 frames per second
-        if (state.playing) setPlaying(false);
-        XR.scrub += sx * dt * 12 * (boost > 1 ? 3 : 1);
-        if (Math.abs(XR.scrub) >= 1) { const n = Math.trunc(XR.scrub); XR.scrub -= n; show(state.k + n, { hq: true }); redraw = true; }
-      }
-    } else if (XR.mode === "fly") {
-      const alt = Math.max(XR.rig.position.y - groundAt(XR.rig.position.x, XR.rig.position.z), 50);
-      const speed = Math.min(Math.max(alt * 0.6, 150), 8000) * boost;
-      if (sy) {
-        const dir = new THREE.Vector3();
-        camera.getWorldDirection(dir);
-        XR.rig.position.addScaledVector(dir, -sy * speed * dt);
-      }
-      if (Math.abs(x) > 0.7 && XR.snap) {                 // snap turn around the head
-        const head = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
-        XR.rig.rotation.y -= Math.sign(x) * Math.PI / 6;
-        XR.rig.updateMatrixWorld(true);
-        const head2 = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
-        XR.rig.position.sub(head2.sub(head));
-        XR.snap = false;
-      }
-      if (Math.abs(x) < 0.3) XR.snap = true;
-    } else {
-      world.rotation.y += sx * dt * 1.2;
-      const sc = Math.min(Math.max(world.scale.x * (1 - sy * dt * boost), 0.2 / W), 30 / W);
-      world.scale.setScalar(sc);
-    }
-  }
-  if (XR.mode === "fly") {                                 // keep above the ground
-    const floor = groundAt(XR.rig.position.x, XR.rig.position.z) + 30;
-    if (XR.rig.position.y < floor) XR.rig.position.y = floor;
-  }
-  placeCityLabels();
-  if (redraw || (state.playing && state.k !== XR.lastK)) { XR.lastK = state.k; drawPanel(); }
-}
-
-// go
-// start at the largest ice volume; URL parameters: ?t= &mode= &mesh= &exag= &lang=
-const qs = new URLSearchParams(location.search);
-let k0 = stats ? stats.reduce((b, st, i) => (st.vol > stats[b].vol ? i : b), 0) : Math.round(NF / 2);
-if (qs.has("t")) k0 = nearestK(+qs.get("t"));
-state.k = want = k0;
-{
-  const m = window.ALPS3D_CONFIG?.vr ? 0 : { "125": 2, "250": 0, "500": 1 }[qs.get("mesh")] ?? (savedMesh !== null ? +savedMesh : state.mesh);
-  state.mesh = LEVELS[m] ? m : 0;
-  if (state.mesh !== 0) { terrain.geometry.dispose(); terrain.geometry = buildGeometry(LEVELS[state.mesh]); }
-  $("meshRes").querySelectorAll("button").forEach((x) => x.classList.toggle("on", +x.dataset.v === state.mesh));
-}
-if (qs.has("mode")) $("mode").children[+qs.get("mode")]?.click();
-if (qs.has("exag")) { $("exag").value = qs.get("exag"); $("exag").dispatchEvent(new Event("input")); }
-await show(k0, { hq: false });
-const vw = VIEWS.overview;
-controls.target.set(0, 0.6, 0);
-camera.position.set(0, Math.cos(vw.pol) * vw.dist, Math.sin(vw.pol) * vw.dist);
-show(k0);
-
-renderer.setAnimationLoop((now, xrFrame) => {
-  tickPlayback(now);
-  if (xrFrame) { xrUpdate(now, xrFrame); renderer.render(scene, camera); return; }
-  updateFlight(now);
-  controls.update();
-  const dist = camera.position.distanceTo(controls.target);
-  scene.fog.near = dist * 1.2; scene.fog.far = dist * 5;
-  renderer.render(scene, camera);
-  updateLabels();
-  updateReadout();
-});
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+await buildRelief();
+$("loading").hidden = true;
+const blob = await cachedFilm();
+if (blob) useFilm(blob);
+else { $("pickLabel").hidden = false; $("status").textContent = ""; checkXR(); }

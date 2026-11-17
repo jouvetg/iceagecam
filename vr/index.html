@@ -3,77 +3,46 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Swiss Time Machine · VR</title>
-<link rel="stylesheet" href="style.css">
+<title>Swiss Time Machine · Model</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.png">
+<style>
+  :root { --accent: #ff7738; }
+  html, body { margin: 0; height: 100%; background: #0b0d10; color: #e8edf2; font-family: system-ui, sans-serif; overflow: hidden; }
+  #scene { position: fixed; inset: 0; }
+  #ui { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); width: min(560px, calc(100% - 32px));
+    background: rgba(12, 15, 20, 0.85); border: 1px solid #2a3340; border-radius: 14px; padding: 18px 20px; text-align: center; }
+  h1 { margin: 0 0 4px; font-size: 22px; color: var(--accent); }
+  #sub { margin: 0 0 14px; font-size: 14px; color: #9fb0c2; }
+  button { font: inherit; font-size: 17px; font-weight: 600; padding: 12px 22px; margin: 4px; border-radius: 10px; border: 0;
+    cursor: pointer; background: var(--accent); color: #1b0d05; }
+  .btn { display: inline-block; font-size: 17px; font-weight: 600; padding: 12px 22px; margin: 4px; border-radius: 10px;
+    cursor: pointer; background: #e8edf2; color: #1b0d05; }
+  .btn[hidden] { display: none; }
+  .btn.small { font-size: 13px; font-weight: 400; padding: 8px 14px; background: #2a3340; color: #e8edf2; }
+  button:disabled { background: #444; color: #999; cursor: not-allowed; }
+  #dl { background: #e8edf2; }
+  #status { margin: 10px 0 0; font-size: 13px; color: #9fb0c2; min-height: 1em; }
+  #loading { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); font-size: 14px; color: #9fb0c2; }
+  body.xr #ui, body.xr #loading { display: none; }
+  video { display: none; }
+</style>
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/" } }
 </script>
 </head>
 <body>
 <div id="scene"></div>
-<div id="labels"></div>
-
-
-<aside id="panel" class="glass">
-  <button id="panelToggle" class="iconbtn" data-i18n-title="panelToggle"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-  <div class="panel-body">
-    <section>
-      <h3 data-i18n="layer"></h3>
-      <div class="seg" id="mode">
-        <button data-v="0" class="on" data-i18n="texture"></button>
-        <button data-v="1" data-i18n="thickness"></button>
-        <button data-v="2" data-i18n="speed"></button>
-      </div>
-      <div id="legend" class="legend hidden">
-        <div class="bar" id="legendBar"></div>
-        <div class="ticks" id="legendTicks"></div>
-      </div>
-      <label class="row" id="opacityRow" hidden><span data-i18n="opacity"></span> <input id="opacity" type="range" min="0" max="1" step="0.05" value="0.75"></label>
-    </section>
-    <section hidden>
-      <h3 data-i18n="terrain"></h3>
-      <label class="row"><span data-i18n="exag"></span> <output id="exagOut">2.0×</output>
-        <input id="exag" type="range" min="1" max="6" step="0.1" value="2"></label>
-      <label class="row"><span data-i18n="shade"></span> <input id="shade" autocomplete="off" type="range" min="0" max="1" step="0.05" value="0"></label>
-      <label class="row"><span data-i18n="sun"></span> <input id="sunaz" type="range" min="0" max="360" step="5" value="315"></label>
-      <div class="row"><span data-i18n="mesh"></span>
-        <div class="seg small" id="meshRes">
-          <button data-v="2" title="Native IGM grid — needs a strong GPU">125 m</button>
-          <button data-v="0" class="on">250 m</button>
-          <button data-v="1">500 m</button>
-        </div>
-      </div>
-      <label class="check"><input id="hq" type="checkbox" checked> <span data-i18n="hq"></span></label>
-    </section>
-    <section hidden>
-      <h3 data-i18n="overlays"></h3>
-      <label class="check"><input id="showBorder" type="checkbox" checked> <span data-i18n="border"></span></label>
-      <label class="check"><input id="showCities" type="checkbox" checked> <span data-i18n="cities"></span></label>
-    </section>
-    <section hidden>
-      <h3 data-i18n="flyto"></h3>
-      <div class="views" id="views"></div>
-    </section>
-    <section class="help" data-i18n-html="help" hidden></section>
-  </div>
-</aside>
-
-<div id="readout" class="glass hidden"></div>
-<div id="loading" class="glass" data-i18n="loading">Loading…</div>
-
-<footer id="timebar" class="glass">
-  <div class="controls left">
-    <button id="prev" class="iconbtn" data-i18n-title="prev"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
-    <button id="play" class="iconbtn big" data-i18n-title="play"></button>
-    <button id="next" class="iconbtn" data-i18n-title="next"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
-  </div>
-  <div id="tlWrap" data-i18n-title="tlTitle"><span class="tlimg"><span class="tlinner"><img id="timeline" alt="Temperature and CO2 timeline" draggable="false"><span id="tlMarker"></span></span></span></div>
-  <div class="controls right">
-    <div class="seg small" id="lang" data-i18n-title="lang"><button data-v="en">EN</button><button data-v="de">DE</button><button data-v="fr">FR</button></div>
-  </div>
-</footer>
-
-<script src="config.js"></script>
+<div id="loading">Loading…</div>
+<div id="ui">
+  <h1 id="title">Swiss Time Machine</h1>
+  <p id="sub"></p>
+  <label id="pickLabel" class="btn" hidden><span id="pickText"></span><input id="pick" type="file" accept="video/mp4,video/*" hidden></label>
+  <button id="dl" hidden></button>
+  <button id="enter" disabled></button>
+  <p id="status"></p>
+</div>
+<video id="film" playsinline preload="auto"></video>
 <script type="module" src="app.js"></script>
 </body>
 </html>
